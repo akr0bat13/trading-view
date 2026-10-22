@@ -128,7 +128,7 @@ class Pane {
     });
     this.makeMain();
     const redraw = () => this.scheduleDraw();
-    this.chart.timeScale().subscribeVisibleLogicalRangeChange(redraw);
+    this.chart.timeScale().subscribeVisibleLogicalRangeChange(r => { redraw(); if (r && r.from < 20 && this.userMoved) this.loadOlder(); });
     this.chart.subscribeCrosshairMove(p => {
       this.showOhlc(p.time != null ? this.barAt(p.time) : null); redraw();
       if (S.syncCursor && this.pointerInside) panes.forEach(o => o !== this && o.setCursor(p.time));
@@ -137,6 +137,7 @@ class Pane {
     wrap.addEventListener('pointerenter', () => { this.pointerInside = true; });
     wrap.addEventListener('pointerleave', () => { this.pointerInside = false; this.hovering = false; if (S.syncCursor) panes.forEach(o => o !== this && o.setCursor(null)); });
     wrap.addEventListener('pointermove', () => { this.hovering = true; });
+    for (const t of ['wheel', 'pointerdown']) wrap.addEventListener(t, () => { this.userMoved = true; }, { capture: true, passive: true }); // only history requests caused by the user scrolling
     this.chart.timeScale().subscribeSizeChange(redraw);
     Draw.attach(this);
     this.applyScale();
@@ -234,7 +235,7 @@ class Pane {
   async load() {
     saveConfigs();
     this.stop();
-    this.pending = null;
+    this.pending = null; this.noMore = false; this.olderBusy = false; this.userMoved = false;
     const { source, symbol, tf } = this.cfg, token = this.token = {};
     this.el.querySelector('.title b').textContent = symbol;
     this.el.querySelector('.title .meta').textContent = `${tf} · ${META.sources[source].label}`;
@@ -270,9 +271,28 @@ class Pane {
     }
   }
 
-  async fetchBars() {
-    const { source, symbol, tf } = this.cfg;
-    const r = await fetch(`/api/candles?${new URLSearchParams({ source, symbol, tf })}`);
+  // scrolled near the left edge: fetch one older page and prepend it, keeping the view where it was
+  async loadOlder() {
+    if (this.olderBusy || this.noMore || !this.bars.length) return;
+    this.olderBusy = true;
+    const token = this.token;
+    try {
+      const older = (await this.fetchBars(this.bars[0].time)).filter(b => b.time < this.bars[0].time);
+      if (token !== this.token) return;
+      if (!older.length) { this.noMore = true; return; }
+      const ts = this.chart.timeScale(), range = ts.getVisibleRange();
+      this.bars = older.concat(this.bars);
+      this.candles.setData(this.seriesData());
+      if (range) ts.setVisibleRange(range);
+      this.computeIndicators();
+    } catch { this.noMore = true; }
+    finally { this.olderBusy = false; }
+  }
+
+  async fetchBars(before) {
+    const { source, symbol, tf } = this.cfg, q = { source, symbol, tf };
+    if (before) q.before = before;
+    const r = await fetch(`/api/candles?${new URLSearchParams(q)}`);
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || r.statusText);
     return j;

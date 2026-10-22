@@ -28,7 +28,8 @@ def sources():
 def candles():
     a = request.args
     try:
-        return jsonify(data_source.get_candles(a["source"], a["symbol"].strip(), a.get("tf", "15m")))
+        before = a.get("before", type=int)
+        return jsonify(data_source.get_candles(a["source"], a["symbol"].strip(), a.get("tf", "15m"), before))
     except KeyError as e:
         return jsonify(error=f"missing parameter {e}"), 400
     except Exception as e:  # upstream/network errors -> shown in the pane

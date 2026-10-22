@@ -1,8 +1,9 @@
 """Pluggable market data sources.
 
-Every source is ONE function: fetch(symbol, tf) -> list of candles
+Every source is ONE function: fetch(symbol, tf, before=None) -> list of candles
     [{"time": unix_seconds, "open": f, "high": f, "low": f, "close": f, "volume": f}, ...]
-where tf is one of TIMEFRAMES. Register it in SOURCES and it shows up in the symbol
+where tf is one of TIMEFRAMES. With before=<unix seconds> return the page of history that ends
+just before that time (the chart asks for it when you scroll left); return [] when there is no more. Register it in SOURCES and it shows up in the symbol
 search and the watchlist. The browser polls it for live updates; crypto from
 Hyperliquid additionally streams over Hyperliquid's public websocket.
 
@@ -21,6 +22,7 @@ Example — add Binance:
     SOURCES["binance"] = {"label": "Binance", "fetch": binance, "symbols": ["BTCUSDT", "ETHUSDT"]}
 """
 import time
+from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
@@ -33,8 +35,8 @@ TF_SECONDS = {"1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600,
 HL_INFO = "https://api.hyperliquid.xyz/info"
 
 
-def hyperliquid(symbol, tf):
-    end = int(time.time() * 1000)
+def hyperliquid(symbol, tf, before=None):
+    end = int(before * 1000) - 1 if before else int(time.time() * 1000)
     start = max(0, end - TF_SECONDS[tf] * 1000 * 1000)  # ~1000 bars back (HL caps at 5000)
     r = requests.post(HL_INFO, json={"type": "candleSnapshot", "req": {
         "coin": symbol.upper(), "interval": tf, "startTime": start, "endTime": end}}, timeout=10)
@@ -56,9 +58,16 @@ YF_TF = {"1m": ("1m", "5d"), "5m": ("5m", "30d"), "15m": ("15m", "60d"), "30m": 
          "1h": ("1h", "180d"), "1d": ("1d", "5y"), "1w": ("1wk", "10y"), "1M": ("1mo", "max")}
 
 
-def yahoo(symbol, tf):
+def yahoo(symbol, tf, before=None):
     interval, period = YF_TF[tf]
-    df = yf.Ticker(symbol).history(period=period, interval=interval, auto_adjust=False)
+    if before:  # older page; Yahoo refuses intraday data past its window, which just means "no more"
+        end = datetime.fromtimestamp(before, timezone.utc)
+        try:
+            df = yf.Ticker(symbol).history(start=end - timedelta(seconds=TF_SECONDS[tf] * 500), end=end, interval=interval, auto_adjust=False)
+        except Exception:
+            return []
+    else:
+        df = yf.Ticker(symbol).history(period=period, interval=interval, auto_adjust=False)
     df = df.dropna(subset=["Open", "High", "Low", "Close"])
     return [{"time": int(ts.timestamp()), "open": float(r.Open), "high": float(r.High),
              "low": float(r.Low), "close": float(r.Close), "volume": float(r.Volume)}
@@ -71,8 +80,8 @@ def nse(symbol):
     return symbol if "." in symbol or symbol.startswith("^") else symbol + ".NS"
 
 
-def yahoo_india(symbol, tf):
-    return yahoo(nse(symbol), tf)
+def yahoo_india(symbol, tf, before=None):
+    return yahoo(nse(symbol), tf, before)
 
 
 def yahoo_quotes(symbols, ticker=lambda s: s):
@@ -104,12 +113,12 @@ SOURCES = {
 }
 
 
-def get_candles(source, symbol, tf):
+def get_candles(source, symbol, tf, before=None):
     if source not in SOURCES:
         raise ValueError(f"unknown source {source!r}")
     if tf not in TIMEFRAMES:
         raise ValueError(f"unknown timeframe {tf!r}")
-    return SOURCES[source]["fetch"](symbol, tf)
+    return SOURCES[source]["fetch"](symbol, tf, before)
 
 
 def get_quotes(source, symbols):
