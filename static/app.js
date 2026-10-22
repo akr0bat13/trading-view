@@ -479,6 +479,26 @@ function toggleMax(pane = activePane()) {
   if (on) setActive(panes.indexOf(pane));
   panes.forEach(p => p.scheduleDraw());
 }
+// Named layouts: chart count + every chart's symbol, timeframe, type and indicators
+const Layouts = {
+  list: () => State.data.layouts,
+  save(name) {
+    const l = { name, count: S.count, panes: JSON.parse(JSON.stringify(S.panes)), syncCursor: !!S.syncCursor, syncSymbol: !!S.syncSymbol };
+    const i = this.list().findIndex(x => x.name === name);
+    i < 0 ? this.list().push(l) : (this.list()[i] = l);
+    State.save('layouts');
+  },
+  remove(name) { State.data.layouts = this.list().filter(x => x.name !== name); State.save('layouts'); },
+  apply(name) {
+    const l = this.list().find(x => x.name === name);
+    if (!l) return;
+    while (panes.length) panes.pop().destroy();
+    S.panes = S.panes.map((d, i) => ({ ...d, ...JSON.parse(JSON.stringify(l.panes[i] || {})), ind: normInd(l.panes[i]?.ind ?? d.ind).map(x => ({ ...x, id: uid() })) }));
+    S.syncCursor = l.syncCursor; S.syncSymbol = l.syncSymbol;
+    State.data.settings = S;
+    setCount(l.count);
+  },
+};
 const isMax = () => document.getElementById('grid').classList.contains('has-max');
 
 function setActive(i) {
@@ -492,7 +512,8 @@ function setActive(i) {
 
 async function init() {
   META = await (await fetch('/api/sources')).json();
-  await State.load('settings', 'drawings');
+  await State.load('settings', 'drawings', 'layouts');
+  State.data.layouts ||= [];
   const old = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } }; // pre-server-state settings
   S = State.data.settings || { count: old('tv.count', 4), panes: old('tv.panes', []) };
   S.panes = DEFAULT_PANES.map((d, i) => {

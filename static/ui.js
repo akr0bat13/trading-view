@@ -29,6 +29,7 @@ const UI = (() => {
     link: svg('<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>'),
     bell: svg('<path d="M6 17V11a6 6 0 0 1 12 0v6l1.5 2h-15zM10 21a2 2 0 0 0 4 0"/>'),
     camera: svg('<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>'),
+    layout: svg('<rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/>'),
     plus: svg('<path d="M12 5v14M5 12h14"/>'),
   };
   const TF_LABEL = { '1d': 'D', '1w': 'W', '1M': 'M' };
@@ -177,6 +178,24 @@ const UI = (() => {
     $('#cfg-dlg').showModal();
   }
 
+  // ---------- layouts ----------
+  function renderLayouts() {
+    $('#lay-list').innerHTML = Layouts.list().map(l => `<div class="item" data-n="${l.name.replace(/"/g, '&quot;')}"><b></b><span class="hint">${l.count} chart${l.count > 1 ? 's' : ''}</span><button class="tb icon" data-a="del" title="Delete">✕</button></div>`).join('')
+      || '<div class="item"><span class="hint">No saved layouts yet</span></div>';
+    $('#lay-list').querySelectorAll('.item[data-n]').forEach(el => {
+      el.querySelector('b').textContent = el.dataset.n;
+      el.onclick = e => {
+        if (e.target.closest('[data-a=del]')) { Layouts.remove(el.dataset.n); return renderLayouts(); }
+        $('#lay-dlg').close(); Layouts.apply(el.dataset.n);
+      };
+    });
+  }
+  function saveLayout() {
+    const name = $('#lay-name').value.trim();
+    if (!name) return $('#lay-name').focus();
+    Layouts.save(name); $('#lay-name').value = ''; renderLayouts();
+  }
+
   // ---------- shortcuts ----------
   function onKey(e) {
     if (document.querySelector('dialog[open]')) return;
@@ -227,6 +246,10 @@ const UI = (() => {
       if (S.syncSymbol) { const a = activePane(); panes.forEach(p => p !== a && p.setSymbol(a.cfg.source, a.cfg.symbol, true)); }
       syncHeader();
     };
+    $('#lay-btn').innerHTML = ICON.layout;
+    $('#lay-btn').onclick = () => { renderLayouts(); $('#lay-dlg').showModal(); $('#lay-name').focus(); };
+    $('#lay-save').onclick = saveLayout;
+    $('#lay-name').onkeydown = e => e.key === 'Enter' && saveLayout();
     $('#shot-btn').innerHTML = ICON.camera;
     $('#shot-btn').onclick = () => activePane().screenshot();
     $('#help-btn').innerHTML = ICON.keyboard;

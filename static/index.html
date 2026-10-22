@@ -20,6 +20,7 @@
     <button id="sync-symbol" class="tb icon" title="Sync symbol between charts"></button>
     <span class="spacer"></span>
     <span id="badges"></span>
+    <button id="lay-btn" class="tb icon" title="Layouts: save and restore sets of charts"></button>
     <button id="shot-btn" class="tb icon" title="Save chart as PNG (Alt+S)"></button>
     <button id="help-btn" class="tb icon" title="Keyboard shortcuts (?)"></button>
     <button id="wl-btn" class="tb icon" title="Watchlist"></button>
@@ -49,6 +50,12 @@
     <div class="dlg-head"><span class="dlg-title" id="cfg-title"></span><button class="x" value="close">✕</button></div>
     <div id="cfg-body" class="form"></div>
     <div class="dlg-foot"><button id="cfg-reset" class="btn">Reset</button><button id="cfg-remove" class="btn danger">Remove</button><span class="spacer"></span><button class="btn primary" onclick="this.closest('dialog').close()">Done</button></div>
+  </dialog>
+
+  <dialog id="lay-dlg" class="dlg">
+    <div class="dlg-head"><span class="dlg-title">Layouts</span><button class="x" value="close">✕</button></div>
+    <div class="lay-new"><input id="lay-name" spellcheck="false" autocomplete="off" placeholder="Name the current layout, e.g. Crypto scalp"><button id="lay-save" class="btn primary">Save</button></div>
+    <div id="lay-list" class="list"></div>
   </dialog>
 
   <dialog id="help-dlg" class="dlg">
