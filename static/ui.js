@@ -14,7 +14,13 @@ const UI = (() => {
     cross: svg('<path d="M2 12h20M12 2v20"/>'),
     rect: svg('<rect x="4" y="6" width="16" height="12" rx="1"/>' + dot(4, 6) + dot(20, 18)),
     fib: svg('<path d="M3 5h18M3 9.5h18M3 14h18M3 19h18"/>'),
-    erase: svg('<path d="M8 20h12M4.5 15.5l9-9 5 5-8.5 8.5H8z"/><path d="M9 11l5 5"/>'),
+    channel: svg('<path d="M3 15L15 3M9 21L21 9"/>' + dot(3, 15) + dot(15, 3) + dot(15, 15)),
+    text: svg('<path d="M5 6V4h14v2M12 4v16M9 20h6"/>'),
+    magnet: svg('<path d="M6 4v8a6 6 0 0 0 12 0V4h-4v8a2 2 0 0 1-4 0V4zM6 8h4M14 8h4"/>'),
+    eye: svg('<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'),
+    eyeOff: svg('<path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4M6.6 6.6C3.8 8.4 2 12 2 12s3.5 7 10 7c1.8 0 3.4-.5 4.7-1.3M9.9 9.9a3 3 0 0 0 4.2 4.2"/>'),
+    undo: svg('<path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>'),
+    edit: svg('<path d="M4 20h4L19 9l-4-4L4 16z"/>'),
     trash: svg('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>'),
     search: svg('<circle cx="10.5" cy="10.5" r="6"/><path d="M20 20l-5-5"/>'),
     keyboard: svg('<rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h1M10 10h1M14 10h1M18 10h0M7 14h10"/>'),
@@ -26,11 +32,13 @@ const UI = (() => {
     ['', 'Cursor', 'Esc'], null,
     ['trend', 'Trend line', 'Alt+T'], ['ray', 'Ray'], ['ext', 'Extended line'], ['hline', 'Horizontal line', 'Alt+H'],
     ['hray', 'Horizontal ray', 'Alt+J'], ['vline', 'Vertical line', 'Alt+V'], ['cross', 'Cross line', 'Alt+C'], null,
-    ['rect', 'Rectangle', 'Alt+Shift+R'], ['fib', 'Fib retracement', 'Alt+F'], null,
-    ['erase', 'Eraser'],
+    ['channel', 'Parallel channel'], ['rect', 'Rectangle', 'Alt+Shift+R'], ['fib', 'Fib retracement', 'Alt+F'], null,
+    ['text', 'Text'],
   ];
   const SHORTCUTS = [
-    ['Start typing', 'Symbol search'], ['/', 'Indicators'], ['?', 'This list'], ['Esc', 'Cancel drawing / close dialog'],
+    ['Start typing', 'Symbol search'], ['/', 'Indicators'], ['?', 'This list'], ['Esc', 'Cancel drawing / deselect / close dialog'],
+    ['Click a drawing', 'Select it; drag to move, drag a point to reshape'], ['Delete / Backspace', 'Remove selected drawing'],
+    ['Ctrl/Cmd+Z', 'Undo drawing change'], ['Ctrl/Cmd+Shift+Z', 'Redo'], ['Double-click text', 'Edit text'],
     ...TOOLS.filter(t => t && t[2] && t[0]).map(t => [t[2], t[1]]),
     ['Alt+I', 'Invert (flip) price scale'], ['Alt+L', 'Log scale'], ['Alt+R', 'Reset chart view'], ['Alt+W', 'Show / hide watchlist'],
   ];
@@ -43,11 +51,42 @@ const UI = (() => {
     $('#sym-btn').innerHTML = `${ICON.search}${p.cfg.symbol}`;
     document.querySelectorAll('#tfs .tb').forEach(b => b.classList.toggle('on', b.dataset.tf === p.cfg.tf));
     document.querySelectorAll('.wl-row').forEach(r => r.classList.toggle('cur', r.dataset.key === p.drawKey()));
+    syncDrawToolbar();
   }
 
   function syncTools() {
     document.querySelectorAll('#tools .tb[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === Draw.tool));
+    $('#magnet-btn')?.classList.toggle('on', !!S.magnet);
+    if ($('#hide-btn')) { $('#hide-btn').innerHTML = S.hideDrawings ? ICON.eyeOff : ICON.eye; $('#hide-btn').classList.toggle('on', !!S.hideDrawings); }
   }
+
+  // floating toolbar for the selected drawing: color, width, style, edit text, delete
+  function syncDrawToolbar() {
+    document.querySelector('.dtb')?.remove();
+    const sel = Draw.sel, p = activePane();
+    if (!sel || !p || p.drawKey() !== sel.key) return;
+    const d = sel.d, bar = document.createElement('div');
+    bar.className = 'dtb';
+    const color = Draw.colorOf(d), width = d.width || 1.5, dash = d.dash || 'solid';
+    bar.innerHTML = `<button class="tb" data-a="color" title="Color"><span class="swatch" style="background:${color}"></span></button>
+      <div class="palette">${Draw.PALETTE.map(c => `<button style="background:${c}" data-c="${c}"></button>`).join('')}</div>`
+      + (d.type === 'text' ? `<button class="tb" data-a="edit" title="Edit text">${ICON.edit}</button>`
+        : `<button class="tb" data-a="width" title="Line width"><span class="lw" style="height:${width}px"></span></button>
+           <button class="tb" data-a="dash" title="Line style">${{ solid: '━', dash: '╍', dot: '┈' }[dash]}</button>`)
+      + `<span class="sep"></span><button class="tb" data-a="del" title="Delete (Del)">${ICON.trash}</button>`;
+    bar.addEventListener('pointerdown', e => e.stopPropagation());
+    bar.onclick = e => {
+      const a = e.target.closest('[data-a]')?.dataset.a, c = e.target.closest('[data-c]')?.dataset.c;
+      if (c) return Draw.update({ color: c });
+      if (a === 'color') return bar.classList.toggle('pal');
+      if (a === 'width') return Draw.update({ width: { 1: 2, 1.5: 2, 2: 3, 3: 1 }[width] });
+      if (a === 'dash') return Draw.update({ dash: { solid: 'dash', dash: 'dot', dot: 'solid' }[dash] });
+      if (a === 'edit') return Draw.editText(p, d);
+      if (a === 'del') return Draw.remove();
+    };
+    p.canvas.parentElement.append(bar);
+  }
+
 
   // ---------- symbol search ----------
   let symMode = 'pane', symTab = 'all', hl = 0;
@@ -108,7 +147,10 @@ const UI = (() => {
     if (document.querySelector('dialog[open]')) return;
     if (e.target.closest('input, textarea, select')) return;
     const p = activePane(), alt = e.altKey && !e.ctrlKey && !e.metaKey;
-    if (e.key === 'Escape') return Draw.setTool('');
+    if (e.key === 'Escape') { Draw.setTool(''); return Draw.deselect(); }
+    if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ') { e.preventDefault(); return e.shiftKey ? Draw.redo() : Draw.undo(); }
+    if ((e.ctrlKey || e.metaKey) && e.code === 'KeyY') { e.preventDefault(); return Draw.redo(); }
+    if ((e.key === 'Delete' || e.key === 'Backspace') && Draw.sel) { e.preventDefault(); return Draw.remove(); }
     if (alt) {
       const act = e.shiftKey ? { KeyR: () => Draw.setTool('rect') }[e.code] : {
         ...Object.fromEntries(Object.entries(KEYMAP).map(([c, t]) => [c, () => Draw.setTool(t)])),
@@ -147,6 +189,13 @@ const UI = (() => {
       + `<span class="sep"></span><button class="tb" id="clear-btn" title="Remove all drawings on this symbol">${ICON.trash}</button>`;
     $('#tools').querySelectorAll('.tb[data-tool]').forEach(b => b.onclick = () => Draw.setTool(b.dataset.tool));
     $('#clear-btn').onclick = () => Draw.clear(activePane());
+    $('#tools').insertAdjacentHTML('beforeend', `<span class="sep"></span>
+      <button class="tb" id="magnet-btn" title="Magnet: snap to open/high/low/close">${ICON.magnet}</button>
+      <button class="tb" id="hide-btn" title="Hide all drawings"></button>
+      <button class="tb" id="undo-btn" title="Undo (Ctrl/Cmd+Z)">${ICON.undo}</button>`);
+    $('#magnet-btn').onclick = () => { S.magnet = !S.magnet; saveConfigs(); syncTools(); };
+    $('#hide-btn').onclick = () => { S.hideDrawings = !S.hideDrawings; saveConfigs(); syncTools(); panes.forEach(p => p.scheduleDraw()); };
+    $('#undo-btn').onclick = () => Draw.undo();
     syncTools();
 
     document.querySelectorAll('.dlg .x').forEach(b => b.onclick = () => b.closest('dialog').close());
@@ -164,7 +213,7 @@ const UI = (() => {
     Watch.build();
   }
 
-  return { init, syncHeader, syncTools, openSymbolSearch, ICON };
+  return { init, syncHeader, syncTools, syncDrawToolbar, openSymbolSearch, ICON };
 })();
 
 // ---------- watchlist ----------

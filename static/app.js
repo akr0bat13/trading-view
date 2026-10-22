@@ -387,7 +387,7 @@ function setCount(n) {
 }
 
 function setActive(i) {
-  if (i < 0) return;
+  if (i < 0 || panes[i]?.el.classList.contains('active')) return;
   const changed = S.active !== i;
   S.active = i;
   panes.forEach((p, j) => p.el.classList.toggle('active', j === i));
