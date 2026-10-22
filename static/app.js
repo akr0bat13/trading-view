@@ -2,8 +2,8 @@ const LC = LightweightCharts;
 const COUNTS = [1, 2, 4, 6, 8];
 const LAYOUT = { 1: [1, 1], 2: [2, 1], 4: [2, 2], 6: [3, 2], 8: [4, 2] }; // [cols, rows]
 const DEFAULT_PANES = [
-  ['crypto', 'BTC', '15m'], ['crypto', 'ETH', '15m'], ['india', 'RELIANCE', '15m'], ['us', 'AAPL', '15m'],
-  ['crypto', 'SOL', '1h'], ['us', 'TSLA', '15m'], ['india', 'TCS', '1d'], ['crypto', 'ETH', '1d'],
+  ['crypto', 'BTC', '15m'], ['crypto', 'ETH', '15m'], ['asia', '7203.T', '15m'], ['us', 'AAPL', '15m'],
+  ['crypto', 'SOL', '1h'], ['us', 'TSLA', '15m'], ['eu', 'SAP.DE', '1d'], ['crypto', 'ETH', '1d'],
 ].map(([source, symbol, tf]) => ({ source, symbol, tf, ind: [newInd('vol')] }));
 const POLL_MS = 15000;
 
@@ -21,7 +21,7 @@ const State = {
   },
 };
 const DEFAULT_WATCH = [['crypto', 'BTC'], ['crypto', 'ETH'], ['crypto', 'SOL'], ['crypto', 'HYPE'], ['us', 'AAPL'], ['us', 'TSLA'], ['us', 'NVDA'],
-  ['us', 'SPY'], ['ru', 'SBER'], ['ru', 'GAZP'], ['india', 'RELIANCE'], ['india', 'TCS'], ['india', '^NSEI']].map(([source, symbol]) => ({ source, symbol }));
+  ['us', 'SPY'], ['ru', 'SBER'], ['ru', 'GAZP'], ['asia', '^N225'], ['asia', '0700.HK'], ['eu', '^GDAXI'], ['eu', 'ASML.AS']].map(([source, symbol]) => ({ source, symbol }));
 
 let META; // /api/sources
 let S;    // settings: {count, active, panes: [cfg x8], watch: [{source, symbol}], wl}
@@ -72,16 +72,16 @@ function marketOpen(tz, open, close) { // ponytail: weekdays + hours only, excha
   const mins = +p.hour * 60 + +p.minute;
   return !['Sat', 'Sun'].includes(p.weekday) && mins >= open && mins < close;
 }
-const MARKETS = { us: ['US', 'America/New_York', 570, 960], india: ['India', 'Asia/Kolkata', 555, 930], ru: ['Russia', 'Europe/Moscow', 600, 1130] };
-function setBadge(id, text, on) {
+const MARKETS = { us: ['US', 'America/New_York', 570, 960], tokyo: ['Tokyo', 'Asia/Tokyo', 540, 900], hk: ['HK', 'Asia/Hong_Kong', 570, 960], eu: ['EU', 'Europe/Berlin', 540, 1050], ru: ['RU', 'Europe/Moscow', 600, 1130] };
+function setBadge(id, text, on, tip = text) {
   let el = document.getElementById('badge-' + id);
   if (!el) { el = document.createElement('span'); el.id = 'badge-' + id; el.className = 'badge'; document.getElementById('badges').append(el); }
-  el.textContent = text; el.classList.toggle('open', on); el.classList.toggle('closed', !on);
+  el.textContent = text; el.title = tip; el.classList.toggle('open', on); el.classList.toggle('closed', !on);
 }
 function updateMarketBadges() {
   for (const [id, [name, ...hours]] of Object.entries(MARKETS)) {
     const open = marketOpen(...hours);
-    setBadge(id, `${name} market ${open ? 'open' : 'closed'}`, open);
+    setBadge(id, name, open, `${name} market ${open ? 'open' : 'closed'}`);
   }
 }
 
@@ -521,8 +521,8 @@ async function init() {
     c.ind = normInd(S.panes?.[i]?.ind ?? d.ind);
     return META.sources[c.source] ? c : { ...d, ind: c.ind };
   });
-  S.watch ||= DEFAULT_WATCH.filter(w => META.sources[w.source]);
-  S.wl ??= true;
+  S.watch = (S.watch || DEFAULT_WATCH).filter(w => META.sources[w.source]); // drops entries of removed markets
+  S.wl ??= innerWidth >= 1100; // narrow windows start with the watchlist closed
   State.data.settings = S;
   Draw.load(State.data.drawings);
   if (Object.values(META.sources).some(s => s.live === 'hyperliquid')) { setBadge('hl', 'HL connecting', false); HL.connect(); }

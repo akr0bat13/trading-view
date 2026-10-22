@@ -74,16 +74,6 @@ def yahoo(symbol, tf, before=None):
             for ts, r in df.iterrows()]
 
 
-def nse(symbol):
-    # "RELIANCE" -> NSE ticker "RELIANCE.NS"; explicit ".BO" (BSE) / ".NS" / "^INDEX" kept as is
-    symbol = symbol.upper()
-    return symbol if "." in symbol or symbol.startswith("^") else symbol + ".NS"
-
-
-def yahoo_india(symbol, tf, before=None):
-    return yahoo(nse(symbol), tf, before)
-
-
 def yahoo_quotes(symbols, ticker=lambda s: s):
     def one(s):
         close = yf.Ticker(ticker(s)).history(period="5d", interval="1d")["Close"].dropna()
@@ -161,10 +151,10 @@ SOURCES = {
            "symbols": ["AAPL", "TSLA", "NVDA", "MSFT", "AMZN", "META", "GOOGL", "AMD", "SPY", "QQQ"]},
     "ru": {"label": "Russia (MOEX)", "fetch": moex, "quotes": moex_quotes,
            "symbols": ["SBER", "GAZP", "LKOH", "YDEX", "ROSN", "GMKN", "NVTK", "TATN", "MOEX", "VTBR", "IMOEX"]},
-    "india": {"label": "India (NSE/BSE)", "fetch": yahoo_india,
-              "quotes": lambda symbols: yahoo_quotes(symbols, nse),
-              "symbols": ["RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "SBIN", "ITC",
-                          "TATAMOTORS", "BHARTIARTL", "^NSEI"]},
+    "asia": {"label": "Asia (Tokyo, HK, China, Korea)", "fetch": yahoo, "quotes": yahoo_quotes,
+             "symbols": ["^N225", "7203.T", "6758.T", "9984.T", "^HSI", "0700.HK", "9988.HK", "000001.SS", "600519.SS", "005930.KS"]},
+    "eu": {"label": "Europe (Xetra, LSE, Paris, Amsterdam)", "fetch": yahoo, "quotes": yahoo_quotes,
+           "symbols": ["^GDAXI", "^FTSE", "^STOXX50E", "SAP.DE", "SIE.DE", "ASML.AS", "MC.PA", "AZN.L", "SHEL.L", "NESN.SW"]},
 }
 
 
