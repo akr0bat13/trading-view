@@ -114,7 +114,163 @@ const Ind = (() => {
     return gaps;
   }
 
-  return { bollinger, rsi, macd, vwap, williamsR, volume, volumeProfile, fvg };
+  const smaArr = (src, n) => src.map((_, i) => {
+    if (i < n - 1) return null;
+    let s = 0;
+    for (let j = i - n + 1; j <= i; j++) s += src[j];
+    return s / n;
+  });
+  const sma = (bars, n) => line(bars, smaArr(bars.map(b => b.close), n));
+  const ema = (bars, n) => line(bars, emaArr(bars.map(b => b.close), n).map((v, i) => i < n - 1 ? null : v));
+
+  // Wilder's smoothing (RMA), used by ATR/ADX
+  function rmaArr(src, n) {
+    const out = [];
+    let prev = null, seed = 0;
+    src.forEach((v, i) => {
+      if (i < n) { seed += v; out.push(i === n - 1 ? (prev = seed / n) : null); return; }
+      out.push(prev = (prev * (n - 1) + v) / n);
+    });
+    return out;
+  }
+  const trArr = bars => bars.map((b, i) => i ? Math.max(b.high - b.low, Math.abs(b.high - bars[i - 1].close), Math.abs(b.low - bars[i - 1].close)) : b.high - b.low);
+  const atrArr = (bars, n) => rmaArr(trArr(bars), n);
+  const atr = (bars, n = 14) => line(bars, atrArr(bars, n));
+
+  const hh = (bars, i, n, k = 'high') => { let m = -Infinity; for (let j = Math.max(0, i - n + 1); j <= i; j++) m = Math.max(m, bars[j][k]); return m; };
+  const ll = (bars, i, n, k = 'low') => { let m = Infinity; for (let j = Math.max(0, i - n + 1); j <= i; j++) m = Math.min(m, bars[j][k]); return m; };
+
+  // Supertrend: one line, green below price in uptrend, red above in downtrend
+  function supertrend(bars, n = 10, mult = 3) {
+    const a = atrArr(bars, n), out = [];
+    let up = null, dn = null, trend = 1;
+    bars.forEach((b, i) => {
+      if (a[i] == null) return out.push({ time: b.time });
+      const mid = (b.high + b.low) / 2, bu = mid - mult * a[i], bd = mid + mult * a[i], pc = bars[i - 1].close;
+      up = up != null && pc > up ? Math.max(bu, up) : bu;
+      dn = dn != null && pc < dn ? Math.min(bd, dn) : bd;
+      if (trend === -1 && b.close > dn) trend = 1; else if (trend === 1 && b.close < up) trend = -1;
+      out.push({ time: b.time, value: trend === 1 ? up : dn, color: trend === 1 ? '#26a69a' : '#ef5350' });
+    });
+    return out;
+  }
+
+  function psar(bars, step = 0.02, max = 0.2) {
+    if (bars.length < 2) return line(bars, bars.map(() => null));
+    let up = bars[1].close >= bars[0].close, sar = up ? bars[0].low : bars[0].high, ep = up ? bars[1].high : bars[1].low, af = step;
+    const out = [null];
+    for (let i = 1; i < bars.length; i++) {
+      const b = bars[i];
+      sar = sar + af * (ep - sar);
+      if (up) {
+        sar = Math.min(sar, bars[i - 1].low, bars[Math.max(0, i - 2)].low);
+        if (b.low < sar) { up = false; sar = ep; ep = b.low; af = step; }
+        else if (b.high > ep) { ep = b.high; af = Math.min(max, af + step); }
+      } else {
+        sar = Math.max(sar, bars[i - 1].high, bars[Math.max(0, i - 2)].high);
+        if (b.high > sar) { up = true; sar = ep; ep = b.high; af = step; }
+        else if (b.low < ep) { ep = b.low; af = Math.min(max, af + step); }
+      }
+      out.push(sar);
+    }
+    return line(bars, out);
+  }
+
+  // Ichimoku (9, 26, 52). Cloud spans are shifted 26 bars forward.
+  // ponytail: the last 26 projected cloud bars (beyond the newest candle) aren't drawn.
+  function ichimoku(bars) {
+    const mid = (i, n) => i < n - 1 ? null : (hh(bars, i, n) + ll(bars, i, n)) / 2;
+    const tenkan = bars.map((_, i) => mid(i, 9)), kijun = bars.map((_, i) => mid(i, 26));
+    const a = tenkan.map((t, i) => t == null || kijun[i] == null ? null : (t + kijun[i]) / 2);
+    const b = bars.map((_, i) => mid(i, 52));
+    // shift spans forward 26 bars within the loaded range
+    const sh = arr => arr.map((_, i) => i >= 26 ? arr[i - 26] : null);
+    return { tenkan: line(bars, tenkan), kijun: line(bars, kijun), spanA: line(bars, sh(a)), spanB: line(bars, sh(b)) };
+  }
+
+  function keltner(bars, n = 20, mult = 2) {
+    const m = emaArr(bars.map(b => b.close), n), a = atrArr(bars, n);
+    const at = (f) => line(bars, m.map((v, i) => i < n - 1 || a[i] == null ? null : f(v, a[i])));
+    return { upper: at((v, x) => v + mult * x), mid: at(v => v), lower: at((v, x) => v - mult * x) };
+  }
+
+  function donchian(bars, n = 20) {
+    const ok = i => i >= n - 1;
+    return {
+      upper: line(bars, bars.map((_, i) => ok(i) ? hh(bars, i, n) : null)),
+      lower: line(bars, bars.map((_, i) => ok(i) ? ll(bars, i, n) : null)),
+    };
+  }
+
+  function stochastic(bars, n = 14, kS = 3, dS = 3) {
+    const raw = bars.map((b, i) => {
+      if (i < n - 1) return null;
+      const h = hh(bars, i, n), l = ll(bars, i, n);
+      return h === l ? 50 : 100 * (b.close - l) / (h - l);
+    });
+    const k = smaOfNullable(raw, kS), d = smaOfNullable(k, dS);
+    return { k: line(bars, k), d: line(bars, d) };
+  }
+  function smaOfNullable(src, n) {
+    return src.map((_, i) => {
+      if (i < n - 1) return null;
+      let s = 0;
+      for (let j = i - n + 1; j <= i; j++) { if (src[j] == null) return null; s += src[j]; }
+      return s / n;
+    });
+  }
+
+  function cci(bars, n = 20) {
+    const tp = bars.map(b => (b.high + b.low + b.close) / 3), m = smaArr(tp, n);
+    return line(bars, tp.map((v, i) => {
+      if (m[i] == null) return null;
+      let md = 0;
+      for (let j = i - n + 1; j <= i; j++) md += Math.abs(tp[j] - m[i]);
+      md /= n;
+      return md ? (v - m[i]) / (0.015 * md) : 0;
+    }));
+  }
+
+  function obv(bars) {
+    let v = 0;
+    return bars.map((b, i) => {
+      if (i) v += b.close > bars[i - 1].close ? b.volume : b.close < bars[i - 1].close ? -b.volume : 0;
+      return { time: b.time, value: v };
+    });
+  }
+
+  function mfi(bars, n = 14) {
+    const tp = bars.map(b => (b.high + b.low + b.close) / 3);
+    return line(bars, bars.map((_, i) => {
+      if (i < n) return null;
+      let pos = 0, neg = 0;
+      for (let j = i - n + 1; j <= i; j++) {
+        const f = tp[j] * bars[j].volume;
+        if (tp[j] > tp[j - 1]) pos += f; else if (tp[j] < tp[j - 1]) neg += f;
+      }
+      return neg ? 100 - 100 / (1 + pos / neg) : 100;
+    }));
+  }
+
+  function adx(bars, n = 14) {
+    const pdm = [0], ndm = [0];
+    for (let i = 1; i < bars.length; i++) {
+      const u = bars[i].high - bars[i - 1].high, d = bars[i - 1].low - bars[i].low;
+      pdm.push(u > d && u > 0 ? u : 0); ndm.push(d > u && d > 0 ? d : 0);
+    }
+    const tr = rmaArr(trArr(bars), n), sp = rmaArr(pdm, n), sn = rmaArr(ndm, n);
+    const pdi = tr.map((t, i) => t ? 100 * sp[i] / t : null), ndi = tr.map((t, i) => t ? 100 * sn[i] / t : null);
+    const dx = pdi.map((p, i) => p == null || ndi[i] == null ? 0 : (p + ndi[i] ? 100 * Math.abs(p - ndi[i]) / (p + ndi[i]) : 0));
+    const firstDx = n; // dx is meaningful from bar n on
+    const ax = rmaArr(dx.slice(firstDx), n);
+    const adxArr = bars.map((_, i) => i < firstDx ? null : ax[i - firstDx]);
+    return { adx: line(bars, adxArr), pdi: line(bars, pdi), ndi: line(bars, ndi) };
+  }
+
+  return {
+    bollinger, rsi, macd, vwap, williamsR, volume, volumeProfile, fvg,
+    sma, ema, atr, supertrend, psar, ichimoku, keltner, donchian, stochastic, cci, obv, mfi, adx,
+  };
 })();
 
 if (typeof module !== 'undefined') module.exports = Ind;

@@ -22,4 +22,9 @@ assert.deepStrictEqual(fb.map(g => [g.bull, g.bottom, g.top, g.to]), [[false, 10
 const vp = Ind.volumeProfile([bar(0, 10, 11, 10, 11, 900), bar(60, 11, 20, 19, 19, 100)], 10);
 assert.ok(vp.poc < 12, 'POC sits where most volume traded');
 assert.ok(vp.val <= vp.poc && vp.poc <= vp.vah);
+const st = Ind.supertrend(rising).at(-1);
+assert.ok(st.value < rising.at(-1).close && st.color === '#26a69a', 'Supertrend below price, green in uptrend');
+assert.ok(Ind.stochastic(rising).k.every(p => p.value == null || (p.value >= 0 && p.value <= 100)));
+assert.ok(Ind.ema(rising, 9).at(-1).value > Ind.sma(rising, 20).at(-1).value, 'fast EMA leads slow SMA in uptrend');
+assert.ok(Ind.adx(rising).pdi.at(-1).value > Ind.adx(rising).ndi.at(-1).value, '+DI > -DI in uptrend');
 console.log('indicators: ok');

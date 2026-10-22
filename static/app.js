@@ -5,10 +5,36 @@ const DEFAULT_PANES = [
   ['crypto', 'BTC', '15m'], ['crypto', 'ETH', '15m'], ['india', 'RELIANCE', '15m'], ['us', 'AAPL', '15m'],
   ['crypto', 'SOL', '1h'], ['us', 'TSLA', '15m'], ['india', 'TCS', '1d'], ['crypto', 'ETH', '1d'],
 ].map(([source, symbol, tf]) => ({ source, symbol, tf, ind: ['vol'] }));
-const INDICATORS = [ // [key, label, premium on TradingView]
-  ['vol', 'Volume'], ['bb', 'Bollinger Bands'], ['vwap', 'VWAP'],
-  ['rsi', 'RSI (14)'], ['macd', 'MACD (12,26,9)'], ['willr', 'Williams %R (14)'],
-  ['vp', 'Volume Profile', true], ['fvg', 'Fair Value Gap', true],
+// Indicator table. series: ['line'|'hist', options]; calc returns one data array per series.
+// pane: true = own sub-pane below the price chart. Add an indicator = add a row here.
+const L = (color, o = {}) => ['line', { color, ...o }], H = (o = {}) => ['hist', o];
+const ema = (n, c) => ({ key: 'ema' + n, label: `EMA ${n}`, group: 'Moving averages', series: [L(c)], calc: b => [Ind.ema(b, n)] });
+const sma = (n, c) => ({ key: 'sma' + n, label: `SMA ${n}`, group: 'Moving averages', series: [L(c)], calc: b => [Ind.sma(b, n)] });
+const BAND = 'rgba(41,98,255,0.6)', MID = 'rgba(255,152,0,0.6)';
+const INDICATORS = [
+  ema(9, '#f7c948'), ema(21, '#4dd0e1'), ema(50, '#ff9800'), ema(200, '#e91e63'),
+  sma(20, '#90caf9'), sma(50, '#ffcc80'), sma(200, '#f48fb1'),
+  { key: 'vol', label: 'Volume', group: 'Overlays', series: [H({ priceScaleId: 'vol', priceFormat: { type: 'volume' } })], calc: b => [Ind.volume(b)] },
+  { key: 'bb', label: 'Bollinger Bands (20, 2)', group: 'Overlays', series: [L(BAND), L(MID), L(BAND)], calc: b => { const x = Ind.bollinger(b); return [x.upper, x.mid, x.lower]; } },
+  { key: 'kc', label: 'Keltner Channels (20, 2)', group: 'Overlays', series: [L('#26c6da99'), L('#26c6da55'), L('#26c6da99')], calc: b => { const x = Ind.keltner(b); return [x.upper, x.mid, x.lower]; } },
+  { key: 'dc', label: 'Donchian Channels (20)', group: 'Overlays', series: [L('#9575cd'), L('#9575cd')], calc: b => { const x = Ind.donchian(b); return [x.upper, x.lower]; } },
+  { key: 'vwap', label: 'VWAP', group: 'Overlays', series: [L('#e040fb', { lineWidth: 2 })], calc: b => [Ind.vwap(b)] },
+  { key: 'st', label: 'Supertrend (10, 3)', group: 'Overlays', series: [L('#26a69a', { lineWidth: 2 })], calc: b => [Ind.supertrend(b)] },
+  { key: 'psar', label: 'Parabolic SAR', group: 'Overlays', series: [L('rgba(255,235,59,0.7)', { lineVisible: false, pointMarkersVisible: true, pointMarkersRadius: 1 })], calc: b => [Ind.psar(b)] },
+  { key: 'ichi', label: 'Ichimoku Cloud', group: 'Overlays', series: [L('#2962ff'), L('#b71c1c'), L('#4caf5099'), L('#f4433699')],
+    calc: b => { const x = Ind.ichimoku(b); return [x.tenkan, x.kijun, x.spanA, x.spanB]; } },
+  { key: 'rsi', label: 'RSI (14)', group: 'Oscillators', pane: true, levels: [70, 30], series: [L('#b388ff')], calc: b => [Ind.rsi(b)] },
+  { key: 'macd', label: 'MACD (12, 26, 9)', group: 'Oscillators', pane: true, series: [H(), L('#2962ff'), L('#ff6d00')], calc: b => { const m = Ind.macd(b); return [m.hist, m.macd, m.signal]; } },
+  { key: 'stoch', label: 'Stochastic (14, 3, 3)', group: 'Oscillators', pane: true, levels: [80, 20], series: [L('#2962ff'), L('#ff6d00')], calc: b => { const x = Ind.stochastic(b); return [x.k, x.d]; } },
+  { key: 'willr', label: 'Williams %R (14)', group: 'Oscillators', pane: true, levels: [-20, -80], series: [L('#00bcd4')], calc: b => [Ind.williamsR(b)] },
+  { key: 'cci', label: 'CCI (20)', group: 'Oscillators', pane: true, levels: [100, -100], series: [L('#8d6e63')], calc: b => [Ind.cci(b)] },
+  { key: 'mfi', label: 'MFI (14)', group: 'Oscillators', pane: true, levels: [80, 20], series: [L('#66bb6a')], calc: b => [Ind.mfi(b)] },
+  { key: 'adx', label: 'ADX / DMI (14)', group: 'Oscillators', pane: true, levels: [25], series: [L('#ff9800', { lineWidth: 2 }), L('#26a69a'), L('#ef5350')],
+    calc: b => { const x = Ind.adx(b); return [x.adx, x.pdi, x.ndi]; } },
+  { key: 'atr', label: 'ATR (14)', group: 'Oscillators', pane: true, series: [L('#ef9a9a')], calc: b => [Ind.atr(b)] },
+  { key: 'obv', label: 'OBV', group: 'Oscillators', pane: true, series: [L('#4fc3f7')], calc: b => [Ind.obv(b)] },
+  { key: 'vp', label: 'Volume Profile', group: 'PRO', canvas: true },
+  { key: 'fvg', label: 'Fair Value Gap', group: 'PRO', canvas: true },
 ];
 const POLL_MS = 15000;
 
@@ -88,6 +114,11 @@ function tickFmt(t, type) { // axis labels in the browser's local time
 const decimals = p => p >= 100 ? 2 : p >= 1 ? 4 : p >= 0.01 ? 6 : 8;
 const fmtPrice = p => p.toLocaleString(undefined, { minimumFractionDigits: Math.min(decimals(p), 2), maximumFractionDigits: decimals(p) });
 
+function indicatorMenu() {
+  return [...new Set(INDICATORS.map(d => d.group))].map(g => `<div class="grp">${g}</div>` + INDICATORS.filter(d => d.group === g)
+    .map(d => `<label><input type="checkbox" value="${d.key}"> ${d.label}${g === 'PRO' ? '<span class="pro">PRO</span>' : ''}</label>`).join('')).join('');
+}
+
 // ---------- pane ----------
 class Pane {
   constructor(cfg) {
@@ -99,8 +130,8 @@ class Pane {
         <select class="src">${Object.entries(META.sources).map(([k, s]) => `<option value="${k}">${s.label}</option>`).join('')}</select>
         <input class="sym" spellcheck="false" placeholder="Symbol">
         <select class="tf">${META.timeframes.map(t => `<option>${t}</option>`).join('')}</select>
-        <span class="ind"><button type="button">Indicators</button><div class="ind-menu">${INDICATORS.map(([k, label, pro]) =>
-          `<label><input type="checkbox" value="${k}"> ${label}${pro ? '<span class="pro">PRO</span>' : ''}</label>`).join('')}</div></span>
+        <span class="ind"><button type="button">Indicators</button><div class="ind-menu">${indicatorMenu()}</div></span>
+        <select class="draw" title="Drawing tools">${Draw.options()}</select>
         <span class="px">—</span><span class="chg"></span>
       </div>
       <div class="chart-wrap"><div class="chart"></div><canvas></canvas><div class="msg"></div></div>`;
@@ -137,9 +168,12 @@ class Pane {
     this.chart.timeScale().subscribeVisibleLogicalRangeChange(redraw);
     this.chart.subscribeCrosshairMove(redraw);
     this.chart.timeScale().subscribeSizeChange(redraw);
+    Draw.attach(this, $('.draw'));
     this.buildIndicators();
     this.load();
   }
+
+  drawKey() { return `${this.cfg.source}:${this.cfg.symbol}`; }
 
   normSymbol(s) {
     s = s.trim();
@@ -149,6 +183,7 @@ class Pane {
   async load() {
     saveConfigs();
     this.stop();
+    this.setTool('');
     const { source, symbol, tf } = this.cfg, token = this.token = {};
     this.msg.textContent = `Loading ${symbol} ${tf}…`;
     this.px.textContent = '—'; this.chg.textContent = '';
@@ -224,38 +259,27 @@ class Pane {
     Object.values(this.ind).flat().forEach(s => this.chart.removeSeries(s));
     this.ind = {};
     while (this.chart.panes().length > 1) this.chart.removePane(this.chart.panes().length - 1);
-    const on = this.cfg.ind, quiet = { priceLineVisible: false, lastValueVisible: false };
-    const line = (color, opts = {}, pane = 0) => this.chart.addSeries(LC.LineSeries, { color, lineWidth: 1, crosshairMarkerVisible: false, ...quiet, ...opts }, pane);
-    const hist = (opts, pane) => this.chart.addSeries(LC.HistogramSeries, { ...quiet, ...opts }, pane);
-    const levels = (s, ...prices) => prices.forEach(price => s.createPriceLine({ price, color: '#555', lineStyle: 2, axisLabelVisible: false }));
-
+    const on = this.cfg.ind, quiet = { priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false };
     // volume: overlay at the bottom of the price pane, like TradingView
     this.candles.priceScale().applyOptions({ scaleMargins: { top: 0.06, bottom: on.includes('vol') ? 0.22 : 0.06 } });
-    if (on.includes('vol')) {
-      this.ind.vol = [hist({ priceScaleId: 'vol', priceFormat: { type: 'volume' } }, 0)];
-      this.chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
-    }
-    // oscillators: one sub-pane each, as many as you like
     let pane = 0;
-    if (on.includes('rsi')) { const s = line('#b388ff', {}, ++pane); levels(s, 70, 30); this.ind.rsi = [s]; }
-    if (on.includes('macd')) { ++pane; this.ind.macd = [hist({}, pane), line('#2962ff', {}, pane), line('#ff6d00', {}, pane)]; }
-    if (on.includes('willr')) { const s = line('#00bcd4', {}, ++pane); levels(s, -20, -80); this.ind.willr = [s]; }
+    for (const d of INDICATORS) {
+      if (!on.includes(d.key) || d.canvas) continue;
+      const p = d.pane ? ++pane : 0;
+      this.ind[d.key] = d.series.map(([type, o]) => this.chart.addSeries(type === 'hist' ? LC.HistogramSeries : LC.LineSeries, { lineWidth: 1, ...quiet, ...o }, p));
+      (d.levels || []).forEach(price => this.ind[d.key][0].createPriceLine({ price, color: '#555', lineStyle: 2, axisLabelVisible: false }));
+    }
+    if (this.ind.vol) this.chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
     this.chart.panes().forEach((p, i) => p.setStretchFactor(i ? 1 : 3));
-
-    if (on.includes('bb')) this.ind.bb = [line('rgba(41,98,255,0.6)'), line('rgba(255,152,0,0.6)'), line('rgba(41,98,255,0.6)')];
-    if (on.includes('vwap')) this.ind.vwap = [line('#e040fb', { lineWidth: 2 })];
     this.computeIndicators();
   }
 
   computeIndicators() {
-    const b = this.bars, s = this.ind;
-    if (s.vol) s.vol[0].setData(Ind.volume(b));
-    if (s.rsi) s.rsi[0].setData(Ind.rsi(b));
-    if (s.willr) s.willr[0].setData(Ind.williamsR(b));
-    if (s.macd) { const m = Ind.macd(b); s.macd[0].setData(m.hist); s.macd[1].setData(m.macd); s.macd[2].setData(m.signal); }
-    if (s.bb) { const x = Ind.bollinger(b); s.bb[0].setData(x.upper); s.bb[1].setData(x.mid); s.bb[2].setData(x.lower); }
-    if (s.vwap) s.vwap[0].setData(Ind.vwap(b));
-    this.fvgs = this.cfg.ind.includes('fvg') ? Ind.fvg(b) : null;
+    for (const d of INDICATORS) {
+      const series = this.ind[d.key];
+      if (series) d.calc(this.bars).forEach((data, i) => series[i].setData(data));
+    }
+    this.fvgs = this.cfg.ind.includes('fvg') ? Ind.fvg(this.bars) : null;
     this.scheduleDraw();
   }
 
@@ -265,7 +289,7 @@ class Pane {
     requestAnimationFrame(() => { this.drawQueued = false; this.draw(); });
   }
 
-  // Volume Profile + Fair Value Gaps are drawn on a canvas laid over the chart.
+  // Volume Profile, Fair Value Gaps and drawings are painted on a canvas laid over the chart.
   draw() {
     const cv = this.canvas, dpr = devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
     cv.width = W * dpr; cv.height = H * dpr;
@@ -309,6 +333,7 @@ class Pane {
         }
       }
     }
+    Draw.render(g, this, plotW, plotH);
     g.restore();
   }
 
@@ -346,6 +371,7 @@ async function init() {
   document.addEventListener('click', () => document.querySelectorAll('.ind.open').forEach(x => x.classList.remove('open')));
   if (Object.values(META.sources).some(s => s.live === 'hyperliquid')) { setBadge('hl', 'HL connecting', false); HL.connect(); }
   updateMarketBadges(); setInterval(updateMarketBadges, 30000);
+  await Draw.load();
   setCount(COUNTS.includes(count) ? count : 4);
 }
 init();

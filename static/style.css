@@ -47,3 +47,7 @@ header { display: flex; align-items: center; gap: 14px; padding: 6px 12px; borde
 @media (max-width: 900px) {
   #grid { grid-template-columns: 1fr !important; grid-template-rows: none !important; grid-auto-rows: 440px; overflow-y: auto; }
 }
+.ind-menu { max-height: 60vh; overflow-y: auto; }
+.ind-menu .grp { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; padding: 6px 4px 2px; }
+.chart-wrap.drawing > canvas { pointer-events: auto; cursor: crosshair; }
+.bar .draw { width: 84px; }
