@@ -306,6 +306,7 @@ class Pane {
     if (t === 'heikin') this.candles.setData(this.seriesData());
     else this.candles.update(t === 'line' || t === 'area' ? { time: bar.time, value: bar.close } : bar);
     this.msg.textContent = '';
+    Alerts.check(this, last?.close, bar.close);
     if (!this.hovering) this.showOhlc();
     this.refresh(true);
   }

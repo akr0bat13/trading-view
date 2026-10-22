@@ -27,6 +27,7 @@ const UI = (() => {
     list: svg('<path d="M8 6h13M8 12h13M8 18h13M3.5 6h0M3.5 12h0M3.5 18h0"/>'),
     cursor2: svg('<path d="M12 3v18M3 12h18"/><circle cx="12" cy="12" r="3"/>'),
     link: svg('<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>'),
+    bell: svg('<path d="M6 17V11a6 6 0 0 1 12 0v6l1.5 2h-15zM10 21a2 2 0 0 0 4 0"/>'),
     plus: svg('<path d="M12 5v14M5 12h14"/>'),
   };
   const TF_LABEL = { '1d': 'D', '1w': 'W', '1M': 'M' };
@@ -78,6 +79,7 @@ const UI = (() => {
       + (d.type === 'text' ? `<button class="tb" data-a="edit" title="Edit text">${ICON.edit}</button>`
         : `<button class="tb" data-a="width" title="Line width"><span class="lw" style="height:${width}px"></span></button>
            <button class="tb" data-a="dash" title="Line style">${{ solid: '━', dash: '╍', dot: '┈' }[dash]}</button>`)
+      + (['hline', 'hray'].includes(d.type) ? `<button class="tb ${d.alert ? 'on' : ''}" data-a="alert" title="Alert when price crosses this line">${ICON.bell}</button>` : '')
       + `<span class="sep"></span><button class="tb" data-a="del" title="Delete (Del)">${ICON.trash}</button>`;
     bar.addEventListener('pointerdown', e => e.stopPropagation());
     bar.onclick = e => {
@@ -88,6 +90,7 @@ const UI = (() => {
       if (a === 'dash') return Draw.update({ dash: { solid: 'dash', dash: 'dot', dot: 'solid' }[dash] });
       if (a === 'edit') return Draw.editText(p, d);
       if (a === 'del') return Draw.remove();
+      if (a === 'alert') return Draw.update({ alert: Alerts.arm(!d.alert) });
     };
     p.canvas.parentElement.append(bar);
   }
@@ -339,4 +342,50 @@ const Watch = (() => {
   };
 
   return { build };
+})();
+
+// ---------- alerts on horizontal lines ----------
+// A line with alert=true fires once when the live price crosses it (the page must be open): toast, beep, desktop notification.
+const Alerts = (() => {
+  let ctx;
+  function beep() {
+    try {
+      ctx ||= new (window.AudioContext || window.webkitAudioContext)();
+      [0, 0.22].forEach(t => {
+        const o = ctx.createOscillator(), g = ctx.createGain();
+        o.frequency.value = 880; o.connect(g); g.connect(ctx.destination);
+        g.gain.setValueAtTime(0.15, ctx.currentTime + t); g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.18);
+        o.start(ctx.currentTime + t); o.stop(ctx.currentTime + t + 0.2);
+      });
+    } catch { }
+  }
+  // called from a click: unlocks audio and asks for notification permission
+  function arm(on) {
+    if (on) {
+      try { ctx ||= new (window.AudioContext || window.webkitAudioContext)(); ctx.resume(); } catch { }
+      if (window.Notification && Notification.permission === 'default') Notification.requestPermission();
+    }
+    return on;
+  }
+  function fire(pane, d, price) {
+    const msg = `${pane.cfg.symbol} crossed ${fmtPrice(d.pts[0].p)} (now ${fmtPrice(price)})`;
+    beep();
+    const t = document.createElement('div');
+    t.className = 'toast'; t.textContent = '🔔 ' + msg;
+    t.onclick = () => t.remove();
+    document.getElementById('toasts').append(t);
+    setTimeout(() => t.remove(), 15000);
+    try { if (window.Notification && Notification.permission === 'granted') new Notification('Price alert', { body: msg }); } catch { }
+  }
+  function check(pane, prev, price) {
+    if (prev == null || prev === price) return;
+    let hit = false;
+    for (const d of Draw.list(pane.drawKey())) {
+      if (!d.alert) continue;
+      const level = d.pts[0].p;
+      if ((prev < level && price >= level) || (prev > level && price <= level)) { d.alert = false; fire(pane, d, price); hit = true; }
+    }
+    if (hit) { Draw.changed(); UI.syncDrawToolbar(); }
+  }
+  return { check, arm };
 })();

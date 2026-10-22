@@ -102,7 +102,7 @@ const Draw = (() => {
       });
       g.globalAlpha = 1; g.setLineDash([]);
       if (d.type === 'fib') FIB.forEach((l, i) => g.fillText(`${l} (${fmtPrice(b.p + (a.p - b.p) * l)})`, segs[i][0] + 3, segs[i][1] - 3));
-      if (['hline', 'hray', 'cross'].includes(d.type)) g.fillText(fmtPrice(a.p), Math.max(a.x, 0) + 4, a.y - 4);
+      if (['hline', 'hray', 'cross'].includes(d.type)) g.fillText((d.alert ? '🔔 ' : '') + fmtPrice(a.p), Math.max(a.x, 0) + 4, a.y - 4);
       if (d.type === 'text') {
         g.font = `${d.size || 14}px -apple-system, sans-serif`; g.textBaseline = 'middle';
         g.fillText(d.text || '', a.x, a.y);
@@ -157,7 +157,7 @@ const Draw = (() => {
   }
 
   // ---- public API ----
-  const Draw = { tool: '', sel: null, load, setTool, clear, remove, update, attach, render, editText, colorOf, deselect: () => Draw.sel && select(null), undo: () => restore(undo, redo), redo: () => restore(redo, undo), PALETTE };
+  const Draw = { tool: '', sel: null, load, changed, list, setTool, clear, remove, update, attach, render, editText, colorOf, deselect: () => Draw.sel && select(null), undo: () => restore(undo, redo), redo: () => restore(redo, undo), PALETTE };
 
   function setTool(tool) {
     Draw.tool = tool;
@@ -211,7 +211,7 @@ const Draw = (() => {
       const { q } = point(pane, e), key = pane.drawKey(), items = mut(key), need = POINTS[Draw.tool] || 2;
       if (q.p == null) return;
       if (Draw.tool === 'text') { e.preventDefault(); const d = { type: 'text', pts: [q], text: '' }; setTool(''); return editText(pane, d); }
-      if (need === 1) { snapshot(); items.push({ type: Draw.tool, pts: [q] }); setTool(''); return changed(); }
+      if (need === 1) { snapshot(); const d = { type: Draw.tool, pts: [q] }; items.push(d); setTool(''); select({ key, d }); return changed(); }
       if (!pane.pending) { pane.pending = { type: Draw.tool, pts: [q, q] }; return; }
       const p = pane.pending;
       p.pts[p.pts.length - 1] = q;
