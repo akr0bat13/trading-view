@@ -131,7 +131,14 @@ class Pane {
     });
     const redraw = () => this.scheduleDraw();
     this.chart.timeScale().subscribeVisibleLogicalRangeChange(redraw);
-    this.chart.subscribeCrosshairMove(p => { this.hovering = p.time != null; this.showOhlc(p.time != null ? p.seriesData.get(this.candles) : null); redraw(); });
+    this.chart.subscribeCrosshairMove(p => {
+      this.showOhlc(p.time != null ? this.barAt(p.time) : null); redraw();
+      if (S.syncCursor && this.pointerInside) panes.forEach(o => o !== this && o.setCursor(p.time));
+    });
+    const wrap = $('.chart-wrap');
+    wrap.addEventListener('pointerenter', () => { this.pointerInside = true; });
+    wrap.addEventListener('pointerleave', () => { this.pointerInside = false; this.hovering = false; if (S.syncCursor) panes.forEach(o => o !== this && o.setCursor(null)); });
+    wrap.addEventListener('pointermove', () => { this.hovering = true; });
     this.chart.timeScale().subscribeSizeChange(redraw);
     Draw.attach(this);
     this.applyScale();
@@ -139,7 +146,26 @@ class Pane {
     this.load();
   }
 
-  setSymbol(source, symbol) { Object.assign(this.cfg, { source, symbol: normSymbol(source, symbol) }); this.load(); }
+  setSymbol(source, symbol, fromSync) {
+    Object.assign(this.cfg, { source, symbol: normSymbol(source, symbol) });
+    this.load();
+    if (S.syncSymbol && !fromSync) panes.forEach(p => p !== this && p.setSymbol(source, symbol, true));
+  }
+
+  // show this chart's crosshair at the same time as another chart's (nearest earlier bar)
+  setCursor(time) {
+    const b = time != null && this.barAt(time, true);
+    if (!b) return this.chart.clearCrosshairPosition();
+    this.chart.setCrosshairPosition(b.close, b.time, this.candles);
+  }
+
+  // bar with exactly this time, or (nearest = true) the last bar at or before it
+  barAt(time, nearest) {
+    const b = this.bars;
+    let lo = 0, hi = b.length - 1, ans = -1;
+    while (lo <= hi) { const m = (lo + hi) >> 1; if (b[m].time <= time) { ans = m; lo = m + 1; } else hi = m - 1; }
+    return ans >= 0 && (nearest || b[ans].time === time) ? b[ans] : null;
+  }
   setTf(tf) { this.cfg.tf = tf; this.load(); }
   addInd(type) {
     if (IND[type].single && this.cfg.ind.some(i => i.type === type)) return;

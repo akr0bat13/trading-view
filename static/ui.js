@@ -25,6 +25,8 @@ const UI = (() => {
     search: svg('<circle cx="10.5" cy="10.5" r="6"/><path d="M20 20l-5-5"/>'),
     keyboard: svg('<rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h1M10 10h1M14 10h1M18 10h0M7 14h10"/>'),
     list: svg('<path d="M8 6h13M8 12h13M8 18h13M3.5 6h0M3.5 12h0M3.5 18h0"/>'),
+    cursor2: svg('<path d="M12 3v18M3 12h18"/><circle cx="12" cy="12" r="3"/>'),
+    link: svg('<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>'),
     plus: svg('<path d="M12 5v14M5 12h14"/>'),
   };
   const TF_LABEL = { '1d': 'D', '1w': 'W', '1M': 'M' };
@@ -51,6 +53,8 @@ const UI = (() => {
     $('#sym-btn').innerHTML = `${ICON.search}${p.cfg.symbol}`;
     document.querySelectorAll('#tfs .tb').forEach(b => b.classList.toggle('on', b.dataset.tf === p.cfg.tf));
     document.querySelectorAll('.wl-row').forEach(r => r.classList.toggle('cur', r.dataset.key === p.drawKey()));
+    $('#sync-cursor')?.classList.toggle('on', !!S.syncCursor);
+    $('#sync-symbol')?.classList.toggle('on', !!S.syncSymbol);
     syncDrawToolbar();
   }
 
@@ -208,6 +212,14 @@ const UI = (() => {
     $('#ind-btn').onclick = openIndicators;
     $('#counts').innerHTML = COUNTS.map(n => `<button class="tb">${n}</button>`).join('');
     $('#counts').querySelectorAll('.tb').forEach(b => b.onclick = () => setCount(+b.textContent));
+    $('#sync-cursor').innerHTML = ICON.cursor2;
+    $('#sync-symbol').innerHTML = ICON.link;
+    $('#sync-cursor').onclick = () => { S.syncCursor = !S.syncCursor; saveConfigs(); if (!S.syncCursor) panes.forEach(p => p.setCursor(null)); syncHeader(); };
+    $('#sync-symbol').onclick = () => {
+      S.syncSymbol = !S.syncSymbol; saveConfigs();
+      if (S.syncSymbol) { const a = activePane(); panes.forEach(p => p !== a && p.setSymbol(a.cfg.source, a.cfg.symbol, true)); }
+      syncHeader();
+    };
     $('#help-btn').innerHTML = ICON.keyboard;
     $('#help-btn').onclick = () => $('#help-dlg').showModal();
     $('#wl-btn').innerHTML = ICON.list;
@@ -238,6 +250,8 @@ const UI = (() => {
     };
     $('#ind-q').oninput = renderIndicators;
     $('#help-list').innerHTML = SHORTCUTS.map(([k, v]) => `<div class="item">${v}<kbd>${k}</kbd></div>`).join('');
+    // toolbar buttons must not keep focus: after a dialog closes, focus returns there and Enter would re-click them
+    document.addEventListener('click', e => e.target.closest('button.tb')?.blur());
     document.addEventListener('keydown', onKey);
     Watch.build();
   }
