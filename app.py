@@ -1,3 +1,5 @@
+import os
+
 from flask import Flask, jsonify, request
 
 import data_source
@@ -30,4 +32,5 @@ def candles():
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, threaded=True)
+    # 5050, not 5000: macOS AirPlay Receiver occupies port 5000
+    app.run(host="127.0.0.1", port=int(os.environ.get("PORT", 5050)), threaded=True)

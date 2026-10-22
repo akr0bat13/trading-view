@@ -10,7 +10,16 @@
 
 ## Запуск
 
-Нужен Python 3.10+.
+Нужен Python 3.10+. Одна команда (macOS/Linux):
+
+```bash
+./run.sh
+```
+
+Скрипт при первом запуске создаст `.venv`, поставит зависимости и откроет http://127.0.0.1:5050.
+Другой порт: `PORT=8000 ./run.sh`. Порт 5000 не используется, потому что на macOS его занимает AirPlay Receiver.
+
+Вручную (и на Windows):
 
 ```bash
 python -m venv .venv
@@ -18,8 +27,6 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 python app.py
 ```
-
-Откройте http://127.0.0.1:5000
 
 ## Что умеет
 
