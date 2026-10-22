@@ -26,6 +26,16 @@ const DEFAULT_WATCH = [['crypto', 'BTC'], ['crypto', 'ETH'], ['crypto', 'SOL'], 
 let META; // /api/sources
 let S;    // settings: {count, active, panes: [cfg x8], watch: [{source, symbol}], wl}
 const panes = [];
+// trades of the paper bot; the server proxies them from analytics-api and answers 503 when that is not configured
+const BOT = {
+  trades: [],
+  async refresh() {
+    try {
+      const r = await fetch('/api/bot/trades?limit=200');
+      if (r.ok) { this.trades = await r.json(); panes.forEach(p => p.applyBotMarkers()); }
+    } catch { }
+  },
+};
 const saveConfigs = () => State.save('settings');
 const activePane = () => panes[S.active] || panes[0];
 
@@ -159,6 +169,13 @@ class Pane {
     this.applyScale();
     this.applyFormat();
     this.candles.setData(this.seriesData());
+    this.botMarkers = LC.createSeriesMarkers(this.candles, []);
+    this.applyBotMarkers();
+  }
+  // entries and exits of the paper bot, on the BTC chart only (the bot trades BTCUSDT)
+  applyBotMarkers() {
+    const btc = this.cfg.source === 'crypto' && this.cfg.symbol === 'BTC';
+    this.botMarkers?.setMarkers(btc ? BotMarkers.build(BOT.trades, this.bars) : []);
   }
   // PNG of the chart: library screenshot (candles, indicators) + our overlay (drawings, profile, FVG) + a caption
   screenshot() {
@@ -272,6 +289,7 @@ class Pane {
     this.bars = bars;
     this.applyFormat();
     this.candles.setData(this.seriesData());
+    this.applyBotMarkers();
     this.chart.timeScale().fitContent();
     this.chart.timeScale().applyOptions({ rightOffset: 5 });
     this.refresh(false);
@@ -300,6 +318,7 @@ class Pane {
       const ts = this.chart.timeScale(), range = ts.getVisibleRange();
       this.bars = older.concat(this.bars);
       this.candles.setData(this.seriesData());
+      this.applyBotMarkers();
       if (range) ts.setVisibleRange(range);
       this.computeIndicators();
     } catch { this.noMore = true; }
@@ -527,6 +546,7 @@ async function init() {
   Draw.load(State.data.drawings);
   if (Object.values(META.sources).some(s => s.live === 'hyperliquid')) { setBadge('hl', 'HL connecting', false); HL.connect(); }
   updateMarketBadges(); setInterval(updateMarketBadges, 30000);
+  BOT.refresh(); setInterval(() => BOT.refresh(), 60000);
   UI.init();
   setCount(COUNTS.includes(S.count) ? S.count : 4);
 }
