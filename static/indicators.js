@@ -121,6 +121,15 @@ const Ind = (() => {
     return s / n;
   });
   const sma = (bars, n) => line(bars, smaArr(bars.map(b => b.close), n));
+  const wma = (bars, n) => {
+    const w = n * (n + 1) / 2;
+    return line(bars, bars.map((_, i) => {
+      if (i < n - 1) return null;
+      let s = 0;
+      for (let j = 0; j < n; j++) s += bars[i - n + 1 + j].close * (j + 1);
+      return s / w;
+    }));
+  };
   const ema = (bars, n) => line(bars, emaArr(bars.map(b => b.close), n).map((v, i) => i < n - 1 ? null : v));
 
   // Wilder's smoothing (RMA), used by ATR/ADX
@@ -269,7 +278,7 @@ const Ind = (() => {
 
   return {
     bollinger, rsi, macd, vwap, williamsR, volume, volumeProfile, fvg,
-    sma, ema, atr, supertrend, psar, ichimoku, keltner, donchian, stochastic, cci, obv, mfi, adx,
+    sma, ema, wma, atr, supertrend, psar, ichimoku, keltner, donchian, stochastic, cci, obv, mfi, adx,
   };
 })();
 

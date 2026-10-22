@@ -4,38 +4,7 @@ const LAYOUT = { 1: [1, 1], 2: [2, 1], 4: [2, 2], 6: [3, 2], 8: [4, 2] }; // [co
 const DEFAULT_PANES = [
   ['crypto', 'BTC', '15m'], ['crypto', 'ETH', '15m'], ['india', 'RELIANCE', '15m'], ['us', 'AAPL', '15m'],
   ['crypto', 'SOL', '1h'], ['us', 'TSLA', '15m'], ['india', 'TCS', '1d'], ['crypto', 'ETH', '1d'],
-].map(([source, symbol, tf]) => ({ source, symbol, tf, ind: ['vol'] }));
-// Indicator table. series: ['line'|'hist', options]; calc returns one data array per series.
-// pane: true = own sub-pane below the price chart. Add an indicator = add a row here.
-const L = (color, o = {}) => ['line', { color, ...o }], H = (o = {}) => ['hist', o];
-const ema = (n, c) => ({ key: 'ema' + n, label: `EMA ${n}`, group: 'Moving averages', series: [L(c)], calc: b => [Ind.ema(b, n)] });
-const sma = (n, c) => ({ key: 'sma' + n, label: `SMA ${n}`, group: 'Moving averages', series: [L(c)], calc: b => [Ind.sma(b, n)] });
-const BAND = 'rgba(41,98,255,0.6)', MID = 'rgba(255,152,0,0.6)';
-const INDICATORS = [
-  ema(9, '#f7c948'), ema(21, '#4dd0e1'), ema(50, '#ff9800'), ema(200, '#e91e63'),
-  sma(20, '#90caf9'), sma(50, '#ffcc80'), sma(200, '#f48fb1'),
-  { key: 'vol', label: 'Volume', group: 'Overlays', series: [H({ priceScaleId: 'vol', priceFormat: { type: 'volume' } })], calc: b => [Ind.volume(b)] },
-  { key: 'bb', label: 'Bollinger Bands (20, 2)', group: 'Overlays', series: [L(BAND), L(MID), L(BAND)], calc: b => { const x = Ind.bollinger(b); return [x.upper, x.mid, x.lower]; } },
-  { key: 'kc', label: 'Keltner Channels (20, 2)', group: 'Overlays', series: [L('#26c6da99'), L('#26c6da55'), L('#26c6da99')], calc: b => { const x = Ind.keltner(b); return [x.upper, x.mid, x.lower]; } },
-  { key: 'dc', label: 'Donchian Channels (20)', group: 'Overlays', series: [L('#9575cd'), L('#9575cd')], calc: b => { const x = Ind.donchian(b); return [x.upper, x.lower]; } },
-  { key: 'vwap', label: 'VWAP', group: 'Overlays', series: [L('#e040fb', { lineWidth: 2 })], calc: b => [Ind.vwap(b)] },
-  { key: 'st', label: 'Supertrend (10, 3)', group: 'Overlays', series: [L('#26a69a', { lineWidth: 2 })], calc: b => [Ind.supertrend(b)] },
-  { key: 'psar', label: 'Parabolic SAR', group: 'Overlays', series: [L('rgba(255,235,59,0.7)', { lineVisible: false, pointMarkersVisible: true, pointMarkersRadius: 1 })], calc: b => [Ind.psar(b)] },
-  { key: 'ichi', label: 'Ichimoku Cloud', group: 'Overlays', series: [L('#2962ff'), L('#b71c1c'), L('#4caf5099'), L('#f4433699')],
-    calc: b => { const x = Ind.ichimoku(b); return [x.tenkan, x.kijun, x.spanA, x.spanB]; } },
-  { key: 'rsi', label: 'RSI (14)', group: 'Oscillators', pane: true, levels: [70, 30], series: [L('#b388ff')], calc: b => [Ind.rsi(b)] },
-  { key: 'macd', label: 'MACD (12, 26, 9)', group: 'Oscillators', pane: true, series: [H(), L('#2962ff'), L('#ff6d00')], calc: b => { const m = Ind.macd(b); return [m.hist, m.macd, m.signal]; } },
-  { key: 'stoch', label: 'Stochastic (14, 3, 3)', group: 'Oscillators', pane: true, levels: [80, 20], series: [L('#2962ff'), L('#ff6d00')], calc: b => { const x = Ind.stochastic(b); return [x.k, x.d]; } },
-  { key: 'willr', label: 'Williams %R (14)', group: 'Oscillators', pane: true, levels: [-20, -80], series: [L('#00bcd4')], calc: b => [Ind.williamsR(b)] },
-  { key: 'cci', label: 'CCI (20)', group: 'Oscillators', pane: true, levels: [100, -100], series: [L('#8d6e63')], calc: b => [Ind.cci(b)] },
-  { key: 'mfi', label: 'MFI (14)', group: 'Oscillators', pane: true, levels: [80, 20], series: [L('#66bb6a')], calc: b => [Ind.mfi(b)] },
-  { key: 'adx', label: 'ADX / DMI (14)', group: 'Oscillators', pane: true, levels: [25], series: [L('#ff9800', { lineWidth: 2 }), L('#26a69a'), L('#ef5350')],
-    calc: b => { const x = Ind.adx(b); return [x.adx, x.pdi, x.ndi]; } },
-  { key: 'atr', label: 'ATR (14)', group: 'Oscillators', pane: true, series: [L('#ef9a9a')], calc: b => [Ind.atr(b)] },
-  { key: 'obv', label: 'OBV', group: 'Oscillators', pane: true, series: [L('#4fc3f7')], calc: b => [Ind.obv(b)] },
-  { key: 'vp', label: 'Volume Profile', group: 'PRO', canvas: true },
-  { key: 'fvg', label: 'Fair Value Gap', group: 'PRO', canvas: true },
-];
+].map(([source, symbol, tf]) => ({ source, symbol, tf, ind: [newInd('vol')] }));
 const POLL_MS = 15000;
 
 // UI state is kept in JSON files by the Flask backend (state/<name>.json), debounced saves.
@@ -169,11 +138,19 @@ class Pane {
 
   setSymbol(source, symbol) { Object.assign(this.cfg, { source, symbol: normSymbol(source, symbol) }); this.load(); }
   setTf(tf) { this.cfg.tf = tf; this.load(); }
-  toggleInd(key) {
-    const i = this.cfg.ind.indexOf(key);
-    i < 0 ? this.cfg.ind.push(key) : this.cfg.ind.splice(i, 1);
+  addInd(type) {
+    if (IND[type].single && this.cfg.ind.some(i => i.type === type)) return;
+    const inst = newInd(type), same = this.cfg.ind.filter(i => i.type === type).length;
+    if (same && IND[type].color && /^#[0-9a-f]{6}$/i.test(IND[type].color)) inst.color = MA_COLORS[same % MA_COLORS.length]; // 2nd, 3rd... instance gets its own color
+    this.cfg.ind.push(inst);
+    saveConfigs(); this.buildIndicators();
+    return inst;
+  }
+  removeInd(id) {
+    this.cfg.ind = this.cfg.ind.filter(i => i.id !== id);
     saveConfigs(); this.buildIndicators();
   }
+  hasInd(type) { return this.cfg.ind.some(i => i.type === type); }
   applyScale() {
     this.candles.priceScale().applyOptions({ invertScale: !!this.cfg.invert, mode: this.cfg.log ? LC.PriceScaleMode.Logarithmic : LC.PriceScaleMode.Normal });
   }
@@ -279,28 +256,34 @@ class Pane {
     while (this.chart.panes().length > 1) this.chart.removePane(this.chart.panes().length - 1);
     const on = this.cfg.ind, quiet = { priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false };
     // volume: overlay at the bottom of the price pane, like TradingView
-    this.candles.priceScale().applyOptions({ scaleMargins: { top: 0.06, bottom: on.includes('vol') ? 0.22 : 0.06 } });
+    this.candles.priceScale().applyOptions({ scaleMargins: { top: 0.06, bottom: this.hasInd('vol') ? 0.22 : 0.06 } });
     let pane = 0;
-    for (const d of INDICATORS) {
-      if (!on.includes(d.key) || d.canvas) continue;
+    for (const i of on) {
+      const d = IND[i.type];
+      if (d.canvas) continue;
       const p = d.pane ? ++pane : 0;
-      this.ind[d.key] = d.series.map(([type, o]) => this.chart.addSeries(type === 'hist' ? LC.HistogramSeries : LC.LineSeries, { lineWidth: 1, ...quiet, ...o }, p));
-      (d.levels || []).forEach(price => this.ind[d.key][0].createPriceLine({ price, color: '#555', lineStyle: 2, axisLabelVisible: false }));
+      this.ind[i.id] = d.series(indColor(i)).map(([type, o]) => this.chart.addSeries(type === 'hist' ? LC.HistogramSeries : LC.LineSeries, { lineWidth: 1, ...quiet, ...o }, p));
+      (d.levels || []).forEach(price => this.ind[i.id][0].createPriceLine({ price, color: '#555', lineStyle: 2, axisLabelVisible: false }));
     }
-    if (this.ind.vol) this.chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+    if (this.hasInd('vol')) this.chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
     this.chart.panes().forEach((p, i) => p.setStretchFactor(i ? 1 : 3));
-    this.legend.innerHTML = INDICATORS.filter(d => on.includes(d.key)).map(d =>
-      `<span class="row" data-k="${d.key}"><span class="sw" style="background:${d.series ? d.series.at(-1)[1].color || '#787b86' : '#f0b90b'}"></span>${d.label}<button title="Remove">✕</button></span>`).join('');
-    this.legend.querySelectorAll('.row button').forEach(b => b.onclick = () => this.toggleInd(b.parentElement.dataset.k));
+    this.legend.innerHTML = on.map(i => `<span class="row" data-id="${i.id}"><span class="sw" style="background:${indColor(i) || '#f0b90b'}"></span><span class="lbl">${indLabel(i)}</span>`
+      + `${IND[i.type].params ? `<button data-a="cfg" title="Settings">⚙</button>` : ''}<button data-a="rm" title="Remove">✕</button></span>`).join('');
+    this.legend.querySelectorAll('.row').forEach(row => {
+      const id = row.dataset.id;
+      row.querySelector('[data-a=rm]').onclick = () => this.removeInd(id);
+      row.querySelector('[data-a=cfg]')?.addEventListener('click', () => UI.openIndSettings(this, id));
+      row.querySelector('.lbl').ondblclick = () => IND[this.cfg.ind.find(i => i.id === id).type].params && UI.openIndSettings(this, id);
+    });
     this.computeIndicators();
   }
 
   computeIndicators() {
-    for (const d of INDICATORS) {
-      const series = this.ind[d.key];
-      if (series) d.calc(this.bars).forEach((data, i) => series[i].setData(data));
+    for (const i of this.cfg.ind) {
+      const series = this.ind[i.id];
+      if (series) IND[i.type].calc(this.bars, i.params).forEach((data, k) => series[k].setData(data));
     }
-    this.fvgs = this.cfg.ind.includes('fvg') ? Ind.fvg(this.bars) : null;
+    this.fvgs = this.hasInd('fvg') ? Ind.fvg(this.bars) : null;
     this.scheduleDraw();
   }
 
@@ -331,7 +314,7 @@ class Pane {
       }
     }
 
-    if (this.cfg.ind.includes('vp')) {
+    if (this.hasInd('vp')) {
       const r = ts.getVisibleLogicalRange();
       const vis = r ? this.bars.slice(Math.max(0, Math.floor(r.from)), Math.ceil(r.to) + 1) : this.bars;
       const vp = Ind.volumeProfile(vis);
@@ -402,7 +385,8 @@ async function init() {
   S = State.data.settings || { count: old('tv.count', 4), panes: old('tv.panes', []) };
   S.panes = DEFAULT_PANES.map((d, i) => {
     const c = { ...d, ...(S.panes?.[i] || {}) };
-    return META.sources[c.source] ? c : { ...d };
+    c.ind = normInd(S.panes?.[i]?.ind ?? d.ind);
+    return META.sources[c.source] ? c : { ...d, ind: c.ind };
   });
   S.watch ||= DEFAULT_WATCH.filter(w => META.sources[w.source]);
   S.wl ??= true;

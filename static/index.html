@@ -39,6 +39,12 @@
     <div id="ind-list" class="list"></div>
   </dialog>
 
+  <dialog id="cfg-dlg" class="dlg narrow">
+    <div class="dlg-head"><span class="dlg-title" id="cfg-title"></span><button class="x" value="close">✕</button></div>
+    <div id="cfg-body" class="form"></div>
+    <div class="dlg-foot"><button id="cfg-reset" class="btn">Reset</button><button id="cfg-remove" class="btn danger">Remove</button><span class="spacer"></span><button class="btn primary" onclick="this.closest('dialog').close()">Done</button></div>
+  </dialog>
+
   <dialog id="help-dlg" class="dlg">
     <div class="dlg-head"><span class="dlg-title">Keyboard shortcuts</span><button class="x" value="close">✕</button></div>
     <div id="help-list" class="list"></div>
@@ -46,6 +52,7 @@
 
   <script src="vendor/lightweight-charts.standalone.production.js"></script>
   <script src="indicators.js"></script>
+  <script src="indtable.js"></script>
   <script src="drawings.js"></script>
   <script src="app.js"></script>
   <script src="ui.js"></script>

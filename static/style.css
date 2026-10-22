@@ -68,7 +68,7 @@ body.no-wl #watchlist { display: none; }
 .legend .row { display: inline-flex; align-items: center; gap: 6px; padding: 1px 4px; border-radius: 3px; pointer-events: auto; color: var(--muted); width: max-content; }
 .legend .row:hover { background: var(--panel); color: var(--text); }
 .legend .row .sw { width: 8px; height: 8px; border-radius: 2px; }
-.legend .row button { display: none; border: 0; background: none; padding: 0 2px; cursor: pointer; color: var(--muted); }
+.legend .row button { display: none; font-size: 11px; border: 0; background: none; padding: 0 2px; cursor: pointer; color: var(--muted); }
 .legend .row:hover button { display: inline; }
 .legend .row button:hover { color: var(--text); }
 
@@ -125,3 +125,16 @@ body.no-wl #watchlist { display: none; }
 .dtb .palette { display: none; position: absolute; top: 100%; left: 0; margin-top: 4px; padding: 6px; grid-template-columns: repeat(5, 20px); gap: 5px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
 .dtb.pal .palette { display: grid; }
 .dtb .palette button { width: 20px; height: 20px; border-radius: 3px; border: 1px solid rgba(255, 255, 255, .15); cursor: pointer; padding: 0; }
+
+/* indicator settings dialog */
+.dlg.narrow { width: min(340px, calc(100vw - 32px)); }
+.form { padding: 4px 16px 12px; display: flex; flex-direction: column; gap: 8px; }
+.field { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.field input[type=number] { width: 90px; }
+.field input[type=color] { width: 44px; height: 28px; padding: 0; border: 1px solid var(--line); background: none; }
+.dlg-foot { display: flex; gap: 8px; padding: 10px 16px 14px; border-top: 1px solid var(--line); }
+.btn { height: 30px; padding: 0 14px; border: 1px solid var(--line); border-radius: 4px; background: none; cursor: pointer; }
+.btn:hover { background: var(--hover); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.danger { color: var(--down); }
+.legend .row .lbl { cursor: default; }

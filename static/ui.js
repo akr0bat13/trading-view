@@ -132,14 +132,40 @@ const UI = (() => {
     renderIndicators();
   }
   function renderIndicators() {
-    const q = $('#ind-q').value.trim().toLowerCase(), on = activePane().cfg.ind;
+    const q = $('#ind-q').value.trim().toLowerCase(), p = activePane();
     const groups = [...new Set(INDICATORS.map(d => d.group))];
     $('#ind-list').innerHTML = groups.map(g => {
-      const rows = INDICATORS.filter(d => d.group === g && d.label.toLowerCase().includes(q));
-      return rows.length ? `<div class="grp">${g}</div>` + rows.map(d =>
-        `<div class="item" data-k="${d.key}"><span class="chk">${on.includes(d.key) ? '✓' : ''}</span>${d.label}${g === 'PRO' ? ' <span class="pro">PRO</span>' : ''}</div>`).join('') : '';
+      const rows = INDICATORS.filter(d => d.group === g && d.name.toLowerCase().includes(q));
+      return rows.length ? `<div class="grp">${g}</div>` + rows.map(d => {
+        const n = p.cfg.ind.filter(i => i.type === d.type).length;
+        return `<div class="item" data-t="${d.type}"><span class="chk">${n ? (d.single ? '✓' : n) : ''}</span>${d.name}${g === 'PRO' ? ' <span class="pro">PRO</span>' : ''}`
+          + `${n && d.single ? '<span class="hint">click to remove</span>' : !d.single ? '<span class="hint">click to add</span>' : ''}</div>`;
+      }).join('') : '';
     }).join('');
-    $('#ind-list').querySelectorAll('.item').forEach(el => el.onclick = () => { activePane().toggleInd(el.dataset.k); renderIndicators(); });
+    $('#ind-list').querySelectorAll('.item').forEach(el => el.onclick = () => {
+      const t = el.dataset.t, d = IND[t];
+      if (d.single && p.hasInd(t)) p.removeInd(p.cfg.ind.find(i => i.type === t).id);
+      else p.addInd(t);
+      renderIndicators();
+    });
+  }
+
+  // settings of one indicator instance: params + color, applied live
+  function openIndSettings(pane, id) {
+    const inst = pane.cfg.ind.find(i => i.id === id), d = IND[inst.type];
+    if (!inst) return;
+    $('#cfg-title').textContent = d.name;
+    $('#cfg-body').innerHTML = (d.params || []).map(x => `<label class="field"><span>${x.label}</span><input type="number" step="${x.step}" min="${x.step}" data-k="${x.k}" value="${inst.params[x.k]}"></label>`).join('')
+      + (d.color ? `<label class="field"><span>Color</span><input type="color" id="cfg-color" value="${/^#[0-9a-f]{6}$/i.test(indColor(inst)) ? indColor(inst) : '#2962ff'}"></label>` : '');
+    const apply = () => {
+      $('#cfg-body').querySelectorAll('input[data-k]').forEach(el => { const v = +el.value; if (v > 0) inst.params[el.dataset.k] = v; });
+      const c = $('#cfg-color'); if (c && c.dataset.touched) inst.color = c.value;
+      saveConfigs(); pane.buildIndicators();
+    };
+    $('#cfg-body').oninput = e => { if (e.target.id === 'cfg-color') e.target.dataset.touched = 1; apply(); };
+    $('#cfg-remove').onclick = () => { $('#cfg-dlg').close(); pane.removeInd(id); };
+    $('#cfg-reset').onclick = () => { inst.params = defaultParams(d); delete inst.color; saveConfigs(); pane.buildIndicators(); $('#cfg-dlg').close(); };
+    $('#cfg-dlg').showModal();
   }
 
   // ---------- shortcuts ----------
@@ -213,7 +239,7 @@ const UI = (() => {
     Watch.build();
   }
 
-  return { init, syncHeader, syncTools, syncDrawToolbar, openSymbolSearch, ICON };
+  return { init, syncHeader, syncTools, syncDrawToolbar, openSymbolSearch, openIndSettings, ICON };
 })();
 
 // ---------- watchlist ----------
