@@ -76,10 +76,30 @@ python app.py
 новый рынок появится в выпадающем списке каждого графика. Пример для Binance есть в начале файла.
 Alpaca, Zerodha, Polygon и т.п. подключаются так же (их API-ключи — уже ваша забота).
 
+## Отметки сделок paper-бота
+
+На графике BTC (Crypto) рисуются стрелки бота: синяя вверх = вход (`Bot BUY <кол-во>`), красная/зелёная вниз = выход
+(`SL` или `TP` и результат в USDT). Сделки берёт сервер из `analytics-api` (`GET /api/v1/trader/trades` проекта
+Investment-Analytics-Platform) и отдаёт браузеру как `/api/bot/trades`; токен сервиса в браузер не попадает.
+Нужны переменные `ANALYTICS_URL` и `ANALYTICS_TOKEN`; без них отметок нет, остальное работает как раньше.
+Обновляются раз в минуту.
+
+## Деплой на Railway (отдельный сервис)
+
+1. Новый сервис из этого репозитория (запуск берётся из `Procfile`: gunicorn).
+2. Вкладка **Variables**: `AUTH_PASSWORD` (логин `admin`, можно поменять через `AUTH_USER`), `HOST=0.0.0.0`,
+   `ANALYTICS_URL=http://analytics-api.railway.internal:<порт analytics-api>`, `ANALYTICS_TOKEN` (ссылка на `SERVICE_TOKEN`
+   сервиса `analytics-api`), `STATE_DIR=/data`.
+3. Volume с точкой монтирования `/data`, иначе рисунки и раскладки пропадают при каждом деплое.
+4. Сгенерируйте публичный домен. Без `AUTH_PASSWORD` приложение на Railway не запустится: иначе любой мог бы писать в
+   его состояние и читать сделки бота.
+
 ## Тесты
 
 ```bash
 node tests/indicators.test.js
+node tests/botmarkers.test.js
+python -m unittest discover -s tests -p 'test_*.py'
 ```
 
 ## Ограничения
