@@ -99,7 +99,7 @@ const fmtPrice = p => p.toLocaleString(undefined, { minimumFractionDigits: Math.
 // ---------- pane ----------
 class Pane {
   constructor(cfg) {
-    this.cfg = cfg; this.bars = []; this.ind = {}; this.stop = () => { };
+    this.cfg = cfg; this.bars = []; this.ind = {}; this.candles = null; this.stop = () => { };
     const el = this.el = document.createElement('section');
     el.className = 'pane';
     el.innerHTML = `
@@ -126,9 +126,7 @@ class Pane {
       timeScale: { borderColor: '#2a2e39', timeVisible: true, tickMarkFormatter: tickFmt },
       localization: { timeFormatter: t => new Date(t * 1000).toLocaleString() },
     });
-    this.candles = this.chart.addSeries(LC.CandlestickSeries, {
-      upColor: '#089981', downColor: '#f23645', borderVisible: false, wickUpColor: '#089981', wickDownColor: '#f23645',
-    });
+    this.makeMain();
     const redraw = () => this.scheduleDraw();
     this.chart.timeScale().subscribeVisibleLogicalRangeChange(redraw);
     this.chart.subscribeCrosshairMove(p => {
@@ -144,6 +142,40 @@ class Pane {
     this.applyScale();
     this.buildIndicators();
     this.load();
+  }
+
+  // price series in the main pane; recreated when the chart type changes
+  makeMain() {
+    if (this.candles) this.chart.removeSeries(this.candles);
+    const t = this.cfg.type || 'candles', up = '#089981', down = '#f23645';
+    const [def, o] = {
+      line: [LC.LineSeries, { color: '#2962ff', lineWidth: 2 }],
+      area: [LC.AreaSeries, { lineColor: '#2962ff', topColor: 'rgba(41,98,255,.35)', bottomColor: 'rgba(41,98,255,0)', lineWidth: 2 }],
+      bars: [LC.BarSeries, { upColor: up, downColor: down }],
+    }[t] || [LC.CandlestickSeries, { upColor: up, downColor: down, borderVisible: false, wickUpColor: up, wickDownColor: down }];
+    this.candles = this.chart.addSeries(def, o, 0);
+    this.candles.priceScale().applyOptions({ scaleMargins: { top: 0.06, bottom: this.hasInd?.('vol') ? 0.22 : 0.06 } });
+    this.applyScale();
+    this.applyFormat();
+    this.candles.setData(this.seriesData());
+  }
+  setType(type) { this.cfg.type = type; saveConfigs(); this.makeMain(); this.scheduleDraw(); }
+
+  // bars -> points for the main series (Heikin Ashi is derived, the stored bars stay real)
+  seriesData() {
+    const t = this.cfg.type || 'candles';
+    if (t === 'line' || t === 'area') return this.bars.map(b => ({ time: b.time, value: b.close }));
+    if (t !== 'heikin') return this.bars;
+    let po, pc;
+    return this.bars.map(b => {
+      const c = (b.open + b.high + b.low + b.close) / 4, o = po == null ? (b.open + b.close) / 2 : (po + pc) / 2;
+      po = o; pc = c;
+      return { time: b.time, open: o, high: Math.max(b.high, o, c), low: Math.min(b.low, o, c), close: c };
+    });
+  }
+  applyFormat() {
+    const prec = decimals(this.bars.at(-1)?.close ?? 1);
+    this.candles.applyOptions({ priceFormat: { type: 'price', precision: prec, minMove: 10 ** -prec } });
   }
 
   setSymbol(source, symbol, fromSync) {
@@ -220,9 +252,8 @@ class Pane {
     if (!bars.length) { this.msg.textContent = `No data for ${symbol} ${tf}`; }
     else this.msg.textContent = '';
     this.bars = bars;
-    const prec = decimals(bars.at(-1)?.close ?? 1);
-    this.candles.applyOptions({ priceFormat: { type: 'price', precision: prec, minMove: 10 ** -prec } });
-    this.candles.setData(bars);
+    this.applyFormat();
+    this.candles.setData(this.seriesData());
     this.chart.timeScale().fitContent();
     this.chart.timeScale().applyOptions({ rightOffset: 5 });
     this.refresh(false);
@@ -251,7 +282,9 @@ class Pane {
     const last = this.bars.at(-1);
     if (last && bar.time < last.time) return;
     if (last && bar.time === last.time) this.bars[this.bars.length - 1] = bar; else this.bars.push(bar);
-    this.candles.update(bar);
+    const t = this.cfg.type || 'candles';
+    if (t === 'heikin') this.candles.setData(this.seriesData());
+    else this.candles.update(t === 'line' || t === 'area' ? { time: bar.time, value: bar.close } : bar);
     this.msg.textContent = '';
     if (!this.hovering) this.showOhlc();
     this.refresh(true);

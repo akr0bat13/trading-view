@@ -140,3 +140,5 @@ body.no-wl #watchlist { display: none; }
 .legend .row .lbl { cursor: default; }
 .max-btn { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 14px; padding: 0 2px; }
 .max-btn:hover { color: var(--text); }
+select.tb.sel { appearance: none; padding: 0 10px; background: none; border: 0; }
+select.tb.sel option { background: var(--panel); }

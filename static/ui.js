@@ -53,6 +53,7 @@ const UI = (() => {
     $('#sym-btn').innerHTML = `${ICON.search}${p.cfg.symbol}`;
     document.querySelectorAll('#tfs .tb').forEach(b => b.classList.toggle('on', b.dataset.tf === p.cfg.tf));
     document.querySelectorAll('.wl-row').forEach(r => r.classList.toggle('cur', r.dataset.key === p.drawKey()));
+    if ($('#type-sel')) $('#type-sel').value = p.cfg.type || 'candles';
     $('#sync-cursor')?.classList.toggle('on', !!S.syncCursor);
     $('#sync-symbol')?.classList.toggle('on', !!S.syncSymbol);
     syncDrawToolbar();
@@ -208,6 +209,8 @@ const UI = (() => {
     $('#sym-btn').onclick = () => openSymbolSearch();
     $('#tfs').innerHTML = META.timeframes.map(t => `<button class="tb" data-tf="${t}">${TF_LABEL[t] || t}</button>`).join('');
     $('#tfs').querySelectorAll('.tb').forEach(b => b.onclick = () => activePane().setTf(b.dataset.tf));
+    $('#type-sel').innerHTML = [['candles', 'Candles'], ['heikin', 'Heikin Ashi'], ['bars', 'Bars'], ['line', 'Line'], ['area', 'Area']].map(([k, l]) => `<option value="${k}">${l}</option>`).join('');
+    $('#type-sel').onchange = () => { activePane().setType($('#type-sel').value); $('#type-sel').blur(); };
     $('#ind-btn').innerHTML = '<i style="font-family:serif;font-style:italic">ƒx</i> Indicators';
     $('#ind-btn').onclick = openIndicators;
     $('#counts').innerHTML = COUNTS.map(n => `<button class="tb">${n}</button>`).join('');
