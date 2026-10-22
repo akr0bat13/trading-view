@@ -30,6 +30,38 @@ const UI = (() => {
     bell: svg('<path d="M6 17V11a6 6 0 0 1 12 0v6l1.5 2h-15zM10 21a2 2 0 0 0 4 0"/>'),
     camera: svg('<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>'),
     layout: svg('<rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/>'),
+    info: svg('<path d="M4 18L15 7"/><rect x="12" y="13" width="9" height="6" rx="1"/>'),
+    angle: svg('<path d="M4 19h16M4 19L17 7M10 19a6 6 0 0 0-2-4"/>'),
+    flat: svg('<path d="M4 18L16 8M4 5h12M16 5v3"/>'),
+    pitchfork: svg('<path d="M3 12h18M6 6l15 6M6 18l15-6"/>'),
+    fibext: svg('<path d="M3 4l5 6 4-3M3 12h18M3 16h18M3 20h18"/>'),
+    fibtz: svg('<path d="M5 3v18M9 3v18M14 3v18M20 3v18"/>'),
+    fibfan: svg('<path d="M4 20L20 4M4 20L20 9M4 20L20 14"/>'),
+    gannfan: svg('<path d="M4 20L20 4M4 20L20 8M4 20L20 12M4 20L11 4"/>'),
+    gannbox: svg('<rect x="4" y="4" width="16" height="16"/><path d="M4 4l16 16M12 4v16M4 12h16"/>'),
+    xabcd: svg('<path d="M3 17l4-10 5 8 4-9 5 11"/>'),
+    cypher: svg('<path d="M3 18l5-12 5 9 4-6 4 8"/>'),
+    abcd: svg('<path d="M4 18l5-12 6 9 5-11"/>'),
+    hs: svg('<path d="M2 18l3-5 3 4 4-10 4 10 3-4 3 5"/>'),
+    drives: svg('<path d="M2 19l3-6 2 3 3-8 2 5 3-9 2 5"/>'),
+    elliott: svg('<path d="M3 19l4-6 3 3 5-10 3 6 3-3"/>'),
+    elliottc: svg('<path d="M4 6l6 8 3-4 6 9"/>'),
+    cycles: svg('<path d="M4 3v18M10 3v18M16 3v18M22 3v18"/>'),
+    long: svg('<rect x="4" y="4" width="16" height="9"/><rect x="4" y="13" width="16" height="6"/>'),
+    short: svg('<rect x="4" y="5" width="16" height="6"/><rect x="4" y="11" width="16" height="9"/>'),
+    forecast: svg('<path d="M4 18L18 6M13 6h5v5"/>'),
+    avwap: svg('<path d="M3 17c5 0 6-8 18-9"/><circle cx="3.5" cy="17" r="1.5"/>'),
+    daterange: svg('<path d="M4 12h16M4 8v8M20 8v8M8 9l-4 3 4 3M16 9l4 3-4 3"/>'),
+    dprange: svg('<rect x="4" y="6" width="16" height="12"/><path d="M12 6v12M4 12h16"/>'),
+    brush: svg('<path d="M4 20c4 0 5-4 7-6l6-8 2 2-8 6c-2 2-3 6-7 6z"/>'),
+    highlighter: svg('<path d="M5 19h6M8 15l8-8 3 3-8 8z"/>'),
+    arrowup: svg('<path d="M12 20V6M6 11l6-6 6 6"/>'),
+    arrowdown: svg('<path d="M12 4v14M6 13l6 6 6-6"/>'),
+    marker: svg('<path d="M12 21s-6-6-6-11a6 6 0 0 1 12 0c0 5-6 11-6 11z"/><circle cx="12" cy="10" r="2"/>'),
+    circle: svg('<circle cx="12" cy="12" r="8"/>'),
+    note: svg('<path d="M5 4h14v12h-6l-4 4v-4H5z"/>'),
+    pricelabel: svg('<path d="M3 12l5-5h13v10H8z"/>'),
+    flag: svg('<path d="M6 21V4M6 5h12l-3 4 3 4H6"/>'),
     arrow: svg('<path d="M5 19L19 5M10 5h9v9"/>'),
     triangle: svg('<path d="M4 19L12 5l8 14z"/>'),
     ellipse: svg('<ellipse cx="12" cy="12" rx="9" ry="6"/>'),
@@ -39,13 +71,19 @@ const UI = (() => {
     plus: svg('<path d="M12 5v14M5 12h14"/>'),
   };
   const TF_LABEL = { '1d': 'D', '1w': 'W', '1M': 'M' };
-  const GROUPS = [ // [group title, [[tool, title, shortcut], ...]]; the toolbar shows one button per group
-    ['Lines', [['trend', 'Trend line', 'Alt+T'], ['ray', 'Ray'], ['ext', 'Extended line'], ['hline', 'Horizontal line', 'Alt+H'],
-      ['hray', 'Horizontal ray', 'Alt+J'], ['vline', 'Vertical line', 'Alt+V'], ['cross', 'Cross line', 'Alt+C']]],
-    ['Channels & Fibonacci', [['channel', 'Parallel channel'], ['fib', 'Fib retracement', 'Alt+F']]],
-    ['Shapes & arrows', [['rect', 'Rectangle', 'Alt+Shift+R'], ['ellipse', 'Ellipse'], ['triangle', 'Triangle'], ['arrow', 'Arrow']]],
-    ['Measure', [['range', 'Price range']]],
-    ['Text', [['text', 'Text']]],
+  const GROUPS = [ // [group title, [[tool, title, shortcut, section heading shown above it], ...]]; the toolbar shows one button per group
+    ['Lines', [['trend', 'Trend line', 'Alt+T', 'Lines'], ['info', 'Info line'], ['angle', 'Trend angle'], ['ray', 'Ray'], ['ext', 'Extended line'],
+      ['hline', 'Horizontal line', 'Alt+H'], ['hray', 'Horizontal ray', 'Alt+J'], ['vline', 'Vertical line', 'Alt+V'], ['cross', 'Cross line', 'Alt+C'],
+      ['channel', 'Parallel channel', '', 'Channels'], ['flat', 'Flat top/bottom'], ['pitchfork', 'Pitchfork', '', 'Pitchforks']]],
+    ['Fibonacci & Gann', [['fib', 'Fib retracement', 'Alt+F', 'Fibonacci'], ['fibext', 'Trend-based fib extension'], ['fibtz', 'Fib time zones'], ['fibfan', 'Fib speed resistance fan'],
+      ['gannfan', 'Gann fan', '', 'Gann'], ['gannbox', 'Gann box']]],
+    ['Patterns', [['xabcd', 'XABCD pattern', '', 'Chart patterns'], ['cypher', 'Cypher pattern'], ['abcd', 'ABCD pattern'], ['hs', 'Head and shoulders'], ['drives', 'Three drives pattern'],
+      ['elliott', 'Elliott impulse wave (12345)', '', 'Elliott waves'], ['elliottc', 'Elliott correction wave (ABC)'], ['cycles', 'Time cycles', '', 'Cycles']]],
+    ['Forecasting & measure', [['long', 'Long position', '', 'Forecasting'], ['short', 'Short position'], ['forecast', 'Forecast'], ['avwap', 'Anchored VWAP', '', 'Volume-based'],
+      ['range', 'Price range', '', 'Ranges'], ['daterange', 'Date range'], ['dprange', 'Date and price range']]],
+    ['Brushes & arrows', [['brush', 'Brush', '', 'Brushes'], ['highlighter', 'Highlighter'], ['arrow', 'Arrow', '', 'Arrows'], ['arrowup', 'Arrow up'], ['arrowdown', 'Arrow down'], ['marker', 'Arrow marker']]],
+    ['Shapes', [['rect', 'Rectangle', 'Alt+Shift+R'], ['circle', 'Circle'], ['ellipse', 'Ellipse'], ['triangle', 'Triangle']]],
+    ['Text & notes', [['text', 'Text'], ['note', 'Note'], ['pricelabel', 'Price label'], ['flag', 'Flag']]],
   ];
   const TOOLS = GROUPS.flatMap(g => g[1]);
   const SHORTCUTS = [
@@ -76,8 +114,8 @@ const UI = (() => {
     const fly = $('#fly');
     if (!fly.hidden && fly.dataset.g == i) return closeFlyout();
     fly.dataset.g = i; fly.hidden = false;
-    fly.innerHTML = `<div class="fly-head">${GROUPS[i][0]}</div>` + GROUPS[i][1].map(t =>
-      `<button class="fly-item" data-tool="${t[0]}">${ICON[t[0]]}<span>${t[1]}</span>${t[2] ? `<kbd>${t[2]}</kbd>` : ''}</button>`).join('');
+    fly.innerHTML = GROUPS[i][1].map(t =>
+      `${t[3] ? `<div class="fly-head">${t[3]}</div>` : ''}<button class="fly-item" data-tool="${t[0]}">${ICON[t[0]]}<span>${t[1]}</span>${t[2] ? `<kbd>${t[2]}</kbd>` : ''}</button>`).join('');
     fly.querySelectorAll('.fly-item').forEach(b => b.onclick = () => { Draw.setTool(b.dataset.tool); closeFlyout(); });
     const r = anchor.getBoundingClientRect();
     fly.style.left = r.right + 4 + 'px'; fly.style.top = Math.max(4, Math.min(r.top, innerHeight - fly.offsetHeight - 4)) + 'px';
@@ -110,7 +148,7 @@ const UI = (() => {
     const color = Draw.colorOf(d), width = d.width || 1.5, dash = d.dash || 'solid';
     bar.innerHTML = `<button class="tb" data-a="color" title="Color"><span class="swatch" style="background:${color}"></span></button>
       <div class="palette">${Draw.PALETTE.map(c => `<button style="background:${c}" data-c="${c}"></button>`).join('')}</div>`
-      + (d.type === 'text' ? `<button class="tb" data-a="edit" title="Edit text">${ICON.edit}</button>`
+      + (['text', 'note'].includes(d.type) ? `<button class="tb" data-a="edit" title="Edit text">${ICON.edit}</button>`
         : `<button class="tb" data-a="width" title="Line width"><span class="lw" style="height:${width}px"></span></button>
            <button class="tb" data-a="dash" title="Line style">${{ solid: '━', dash: '╍', dot: '┈' }[dash]}</button>`)
       + (['hline', 'hray'].includes(d.type) ? `<button class="tb ${d.alert ? 'on' : ''}" data-a="alert" title="Alert when price crosses this line">${ICON.bell}</button>` : '')

@@ -181,3 +181,4 @@ select.tb.sel option { background: var(--panel); }
   #tools { width: 48px; }
   #watchlist { width: min(270px, 85vw); }
 }
+#fly { max-height: calc(100vh - 12px); overflow-y: auto; }
