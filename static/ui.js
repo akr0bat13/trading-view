@@ -28,6 +28,7 @@ const UI = (() => {
     cursor2: svg('<path d="M12 3v18M3 12h18"/><circle cx="12" cy="12" r="3"/>'),
     link: svg('<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>'),
     bell: svg('<path d="M6 17V11a6 6 0 0 1 12 0v6l1.5 2h-15zM10 21a2 2 0 0 0 4 0"/>'),
+    camera: svg('<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>'),
     plus: svg('<path d="M12 5v14M5 12h14"/>'),
   };
   const TF_LABEL = { '1d': 'D', '1w': 'W', '1M': 'M' };
@@ -43,7 +44,7 @@ const UI = (() => {
     ['Click a drawing', 'Select it; drag to move, drag a point to reshape'], ['Delete / Backspace', 'Remove selected drawing'],
     ['Ctrl/Cmd+Z', 'Undo drawing change'], ['Ctrl/Cmd+Shift+Z', 'Redo'], ['Double-click text', 'Edit text'],
     ...TOOLS.filter(t => t && t[2] && t[0]).map(t => [t[2], t[1]]),
-    ['Alt+I', 'Invert (flip) price scale'], ['Alt+L', 'Log scale'], ['Alt+R', 'Reset chart view'], ['Alt+W', 'Show / hide watchlist'], ['Alt+M or double-click header', 'Maximize chart (Esc restores)'],
+    ['Alt+I', 'Invert (flip) price scale'], ['Alt+L', 'Log scale'], ['Alt+R', 'Reset chart view'], ['Alt+W', 'Show / hide watchlist'], ['Alt+S', 'Save chart as PNG'], ['Alt+M or double-click header', 'Maximize chart (Esc restores)'],
   ];
   const KEYMAP = { KeyT: 'trend', KeyH: 'hline', KeyJ: 'hray', KeyV: 'vline', KeyC: 'cross', KeyF: 'fib' };
 
@@ -192,7 +193,7 @@ const UI = (() => {
       const act = e.shiftKey ? { KeyR: () => Draw.setTool('rect') }[e.code] : {
         ...Object.fromEntries(Object.entries(KEYMAP).map(([c, t]) => [c, () => Draw.setTool(t)])),
         KeyI: () => p.toggleScale('invert'), KeyL: () => p.toggleScale('log'), KeyR: () => p.resetView(),
-        KeyW: () => toggleWatchlist(), KeyM: () => toggleMax(),
+        KeyW: () => toggleWatchlist(), KeyS: () => p.screenshot(), KeyM: () => toggleMax(),
       }[e.code];
       if (act) { e.preventDefault(); act(); }
       return;
@@ -226,6 +227,8 @@ const UI = (() => {
       if (S.syncSymbol) { const a = activePane(); panes.forEach(p => p !== a && p.setSymbol(a.cfg.source, a.cfg.symbol, true)); }
       syncHeader();
     };
+    $('#shot-btn').innerHTML = ICON.camera;
+    $('#shot-btn').onclick = () => activePane().screenshot();
     $('#help-btn').innerHTML = ICON.keyboard;
     $('#help-btn').onclick = () => $('#help-dlg').showModal();
     $('#wl-btn').innerHTML = ICON.list;

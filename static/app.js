@@ -160,6 +160,23 @@ class Pane {
     this.applyFormat();
     this.candles.setData(this.seriesData());
   }
+  // PNG of the chart: library screenshot (candles, indicators) + our overlay (drawings, profile, FVG) + a caption
+  screenshot() {
+    this.draw();
+    const chartImg = this.chart.takeScreenshot(true), shot = document.createElement('canvas');
+    shot.width = chartImg.width; shot.height = chartImg.height;
+    const g = shot.getContext('2d');
+    g.fillStyle = '#131722'; g.fillRect(0, 0, shot.width, shot.height); // the live chart is transparent over the page background
+    g.drawImage(chartImg, 0, 0);
+    g.drawImage(this.canvas, 0, 0, shot.width, shot.height);
+    const k = shot.width / this.canvas.clientWidth;
+    g.font = `${13 * k}px -apple-system, sans-serif`; g.fillStyle = '#d1d4dc';
+    g.fillText(`${this.cfg.symbol} · ${this.cfg.tf} · ${META.sources[this.cfg.source].label} · ${new Date().toLocaleString()}`, 8 * k, 18 * k);
+    const a = document.createElement('a');
+    a.download = `${this.cfg.symbol.replace(/\W+/g, '_')}_${this.cfg.tf}.png`;
+    a.href = shot.toDataURL('image/png');
+    a.click();
+  }
   setType(type) { this.cfg.type = type; saveConfigs(); this.makeMain(); this.scheduleDraw(); }
 
   // bars -> points for the main series (Heikin Ashi is derived, the stored bars stay real)
