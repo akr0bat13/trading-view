@@ -30,16 +30,24 @@ const UI = (() => {
     bell: svg('<path d="M6 17V11a6 6 0 0 1 12 0v6l1.5 2h-15zM10 21a2 2 0 0 0 4 0"/>'),
     camera: svg('<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>'),
     layout: svg('<rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/>'),
+    arrow: svg('<path d="M5 19L19 5M10 5h9v9"/>'),
+    triangle: svg('<path d="M4 19L12 5l8 14z"/>'),
+    ellipse: svg('<ellipse cx="12" cy="12" rx="9" ry="6"/>'),
+    range: svg('<path d="M4 5h16M4 19h16M12 5v14M9 8l3-3 3 3M9 16l3 3 3-3"/>'),
+    lock: svg('<rect x="5" y="11" width="14" height="9" rx="1.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>'),
+    unlock: svg('<rect x="5" y="11" width="14" height="9" rx="1.5"/><path d="M8 11V8a4 4 0 0 1 7.5-2"/>'),
     plus: svg('<path d="M12 5v14M5 12h14"/>'),
   };
   const TF_LABEL = { '1d': 'D', '1w': 'W', '1M': 'M' };
-  const TOOLS = [ // [tool, title, shortcut]
-    ['', 'Cursor', 'Esc'], null,
-    ['trend', 'Trend line', 'Alt+T'], ['ray', 'Ray'], ['ext', 'Extended line'], ['hline', 'Horizontal line', 'Alt+H'],
-    ['hray', 'Horizontal ray', 'Alt+J'], ['vline', 'Vertical line', 'Alt+V'], ['cross', 'Cross line', 'Alt+C'], null,
-    ['channel', 'Parallel channel'], ['rect', 'Rectangle', 'Alt+Shift+R'], ['fib', 'Fib retracement', 'Alt+F'], null,
-    ['text', 'Text'],
+  const GROUPS = [ // [group title, [[tool, title, shortcut], ...]]; the toolbar shows one button per group
+    ['Lines', [['trend', 'Trend line', 'Alt+T'], ['ray', 'Ray'], ['ext', 'Extended line'], ['hline', 'Horizontal line', 'Alt+H'],
+      ['hray', 'Horizontal ray', 'Alt+J'], ['vline', 'Vertical line', 'Alt+V'], ['cross', 'Cross line', 'Alt+C']]],
+    ['Channels & Fibonacci', [['channel', 'Parallel channel'], ['fib', 'Fib retracement', 'Alt+F']]],
+    ['Shapes & arrows', [['rect', 'Rectangle', 'Alt+Shift+R'], ['ellipse', 'Ellipse'], ['triangle', 'Triangle'], ['arrow', 'Arrow']]],
+    ['Measure', [['range', 'Price range']]],
+    ['Text', [['text', 'Text']]],
   ];
+  const TOOLS = GROUPS.flatMap(g => g[1]);
   const SHORTCUTS = [
     ['Start typing', 'Symbol search'], ['/', 'Indicators'], ['?', 'This list'], ['Esc', 'Cancel drawing / deselect / close dialog'],
     ['Click a drawing', 'Select it; drag to move, drag a point to reshape'], ['Delete / Backspace', 'Remove selected drawing'],
@@ -55,6 +63,7 @@ const UI = (() => {
     if (!p) return;
     $('#sym-btn').innerHTML = `${ICON.search}${p.cfg.symbol}`;
     document.querySelectorAll('#tfs .tb').forEach(b => b.classList.toggle('on', b.dataset.tf === p.cfg.tf));
+    $('#tf-sel').value = p.cfg.tf;
     document.querySelectorAll('.wl-row').forEach(r => r.classList.toggle('cur', r.dataset.key === p.drawKey()));
     if ($('#type-sel')) $('#type-sel').value = p.cfg.type || 'candles';
     $('#sync-cursor')?.classList.toggle('on', !!S.syncCursor);
@@ -62,8 +71,31 @@ const UI = (() => {
     syncDrawToolbar();
   }
 
+  const groupTool = i => GROUPS[i][1].find(t => t[0] === S.lastTool?.[i]) || GROUPS[i][1][0];
+  function openFlyout(i, anchor) {
+    const fly = $('#fly');
+    if (!fly.hidden && fly.dataset.g == i) return closeFlyout();
+    fly.dataset.g = i; fly.hidden = false;
+    fly.innerHTML = `<div class="fly-head">${GROUPS[i][0]}</div>` + GROUPS[i][1].map(t =>
+      `<button class="fly-item" data-tool="${t[0]}">${ICON[t[0]]}<span>${t[1]}</span>${t[2] ? `<kbd>${t[2]}</kbd>` : ''}</button>`).join('');
+    fly.querySelectorAll('.fly-item').forEach(b => b.onclick = () => { Draw.setTool(b.dataset.tool); closeFlyout(); });
+    const r = anchor.getBoundingClientRect();
+    fly.style.left = r.right + 4 + 'px'; fly.style.top = Math.max(4, Math.min(r.top, innerHeight - fly.offsetHeight - 4)) + 'px';
+    syncTools();
+  }
+  const closeFlyout = () => { $('#fly').hidden = true; };
+
   function syncTools() {
-    document.querySelectorAll('#tools .tb[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === Draw.tool));
+    GROUPS.forEach((g, i) => { // a group button shows (and starts) the tool last used from it
+      if (g[1].some(t => t[0] === Draw.tool)) (S.lastTool ||= {})[i] = Draw.tool;
+      const t = groupTool(i), b = document.querySelector(`#tools .main[data-g="${i}"]`);
+      b.innerHTML = ICON[t[0]]; b.dataset.tool = t[0]; b.title = `${g[0]}: ${t[1]}${t[2] ? ` (${t[2]})` : ''}`;
+      b.classList.toggle('on', g[1].some(x => x[0] === Draw.tool));
+    });
+    document.querySelector('#tools [data-tool=""]')?.classList.toggle('on', !Draw.tool);
+    document.querySelectorAll('#fly .fly-item').forEach(b => b.classList.toggle('on', b.dataset.tool === Draw.tool));
+    $('#lock-btn')?.classList.toggle('on', !!S.lockDrawings);
+    if ($('#lock-btn')) $('#lock-btn').innerHTML = S.lockDrawings ? ICON.lock : ICON.unlock;
     $('#magnet-btn')?.classList.toggle('on', !!S.magnet);
     if ($('#hide-btn')) { $('#hide-btn').innerHTML = S.hideDrawings ? ICON.eyeOff : ICON.eye; $('#hide-btn').classList.toggle('on', !!S.hideDrawings); }
   }
@@ -202,6 +234,7 @@ const UI = (() => {
     if (e.target.closest('input, textarea, select')) return;
     const p = activePane(), alt = e.altKey && !e.ctrlKey && !e.metaKey;
     if (e.key === 'Escape') {
+      closeFlyout();
       if (Draw.tool || Draw.sel) { Draw.setTool(''); return Draw.deselect(); }
       return isMax() && toggleMax();
     }
@@ -232,6 +265,8 @@ const UI = (() => {
     $('#sym-btn').onclick = () => openSymbolSearch();
     $('#tfs').innerHTML = META.timeframes.map(t => `<button class="tb" data-tf="${t}">${TF_LABEL[t] || t}</button>`).join('');
     $('#tfs').querySelectorAll('.tb').forEach(b => b.onclick = () => activePane().setTf(b.dataset.tf));
+    $('#tf-sel').innerHTML = META.timeframes.map(t => `<option value="${t}">${TF_LABEL[t] || t}</option>`).join('');
+    $('#tf-sel').onchange = () => { activePane().setTf($('#tf-sel').value); $('#tf-sel').blur(); };
     $('#type-sel').innerHTML = [['candles', 'Candles'], ['heikin', 'Heikin Ashi'], ['bars', 'Bars'], ['line', 'Line'], ['area', 'Area']].map(([k, l]) => `<option value="${k}">${l}</option>`).join('');
     $('#type-sel').onchange = () => { activePane().setType($('#type-sel').value); $('#type-sel').blur(); };
     $('#ind-btn').innerHTML = '<i style="font-family:serif;font-style:italic">ƒx</i> Indicators';
@@ -258,14 +293,20 @@ const UI = (() => {
     $('#wl-btn').onclick = toggleWatchlist;
     document.body.classList.toggle('no-wl', !S.wl);
 
-    $('#tools').innerHTML = TOOLS.map(t => t ? `<button class="tb" data-tool="${t[0]}" title="${t[1]}${t[2] ? ` (${t[2]})` : ''}">${ICON[t[0] || 'cursor']}</button>` : '<span class="sep"></span>').join('')
-      + `<span class="sep"></span><button class="tb" id="clear-btn" title="Remove all drawings on this symbol">${ICON.trash}</button>`;
-    $('#tools').querySelectorAll('.tb[data-tool]').forEach(b => b.onclick = () => Draw.setTool(b.dataset.tool));
-    $('#clear-btn').onclick = () => Draw.clear(activePane());
-    $('#tools').insertAdjacentHTML('beforeend', `<span class="sep"></span>
+    $('#tools').innerHTML = `<button class="tb" data-tool="" title="Cursor (Esc)">${ICON.cursor}</button><span class="sep"></span>`
+      + GROUPS.map((g, i) => `<div class="grp"><button class="tb main" data-g="${i}"></button><button class="caret" data-g="${i}" title="${g[0]}">›</button></div>`).join('')
+      + `<span class="sep"></span>
       <button class="tb" id="magnet-btn" title="Magnet: snap to open/high/low/close">${ICON.magnet}</button>
+      <button class="tb" id="lock-btn" title="Lock drawings (can't be selected or moved)"></button>
       <button class="tb" id="hide-btn" title="Hide all drawings"></button>
-      <button class="tb" id="undo-btn" title="Undo (Ctrl/Cmd+Z)">${ICON.undo}</button>`);
+      <button class="tb" id="undo-btn" title="Undo (Ctrl/Cmd+Z)">${ICON.undo}</button>
+      <button class="tb" id="clear-btn" title="Remove all drawings on this symbol">${ICON.trash}</button>`;
+    $('#tools [data-tool=""]').onclick = () => Draw.setTool('');
+    document.querySelectorAll('#tools .main').forEach(b => b.onclick = () => { closeFlyout(); Draw.setTool(b.dataset.tool); });
+    document.querySelectorAll('#tools .caret').forEach(b => b.onclick = e => { e.stopPropagation(); openFlyout(+b.dataset.g, b.parentElement); });
+    document.addEventListener('click', e => e.target.closest('#fly, .caret') || closeFlyout());
+    $('#clear-btn').onclick = () => Draw.clear(activePane());
+    $('#lock-btn').onclick = () => { S.lockDrawings = !S.lockDrawings; Draw.deselect?.(); saveConfigs(); syncTools(); panes.forEach(p => p.scheduleDraw()); };
     $('#magnet-btn').onclick = () => { S.magnet = !S.magnet; saveConfigs(); syncTools(); };
     $('#hide-btn').onclick = () => { S.hideDrawings = !S.hideDrawings; saveConfigs(); syncTools(); panes.forEach(p => p.scheduleDraw()); };
     $('#undo-btn').onclick = () => Draw.undo();

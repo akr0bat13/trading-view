@@ -2,9 +2,9 @@
 // changes and shows on every pane with the same market + symbol. Saved via State ('drawings').
 // Cursor mode: click a drawing to select it, drag it or its points, Delete removes, Ctrl/Cmd+Z undoes.
 const Draw = (() => {
-  const POINTS = { hline: 1, hray: 1, vline: 1, cross: 1, text: 1, channel: 3 }; // default 2
+  const POINTS = { hline: 1, hray: 1, vline: 1, cross: 1, text: 1, channel: 3, triangle: 3 }; // default 2
   const FIB = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
-  const COLOR = { hline: '#f0b90b', hray: '#f0b90b', vline: '#9598a1', cross: '#9598a1', rect: '#7e57c2', fib: '#089981', text: '#d1d4dc', channel: '#2962ff' };
+  const COLOR = { hline: '#f0b90b', hray: '#f0b90b', vline: '#9598a1', cross: '#9598a1', rect: '#7e57c2', fib: '#089981', text: '#d1d4dc', channel: '#2962ff', arrow: '#f23645', triangle: '#ff9800', ellipse: '#00bcd4', range: '#e040fb' };
   const PALETTE = ['#2962ff', '#089981', '#f23645', '#f0b90b', '#ff9800', '#e040fb', '#00bcd4', '#d1d4dc', '#787b86', '#ffffff'];
   const colorOf = d => d.color || COLOR[d.type] || '#2962ff';
   const DASH = { solid: [], dash: [6, 4], dot: [1.5, 3] };
@@ -67,6 +67,16 @@ const Draw = (() => {
       case 'vline': return [[a.x, 0, a.x, h]];
       case 'cross': return [[0, a.y, w, a.y], [a.x, 0, a.x, h]];
       case 'rect': return [[a.x, a.y, b.x, a.y], [b.x, a.y, b.x, b.y], [b.x, b.y, a.x, b.y], [a.x, b.y, a.x, a.y]];
+      case 'arrow': { // head is 10px long, 25 degrees off the shaft
+        const t = Math.atan2(a.y - b.y, a.x - b.x), head = k => [b.x, b.y, b.x + 10 * Math.cos(t + k), b.y + 10 * Math.sin(t + k)];
+        return [[a.x, a.y, b.x, b.y], head(0.45), head(-0.45)];
+      }
+      case 'triangle': return [[a.x, a.y, b.x, b.y], [b.x, b.y, c.x, c.y], [c.x, c.y, a.x, a.y]];
+      case 'ellipse': {
+        const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2, rx = (b.x - a.x) / 2, ry = (b.y - a.y) / 2, pt = i => [cx + rx * Math.cos(i * Math.PI / 24), cy + ry * Math.sin(i * Math.PI / 24)];
+        return Array.from({ length: 48 }, (_, i) => [...pt(i), ...pt(i + 1)]);
+      }
+      case 'range': { const m = (a.x + b.x) / 2; return [[a.x, a.y, b.x, a.y], [a.x, b.y, b.x, b.y], [m, a.y, m, b.y]]; }
       case 'channel': { const o = channelOffset(a, b, c); return [[a.x, a.y, b.x, b.y], [a.x, a.y + o, b.x, b.y + o]]; }
       case 'fib': {
         const x1 = Math.min(a.x, b.x), x2 = Math.max(a.x, b.x);
@@ -91,6 +101,16 @@ const Draw = (() => {
       g.strokeStyle = g.fillStyle = c; g.lineWidth = d.width || 1.5; g.setLineDash(DASH[d.dash || 'solid']);
       g.font = '11px -apple-system, sans-serif';
       if (d.type === 'rect') { g.globalAlpha = 0.15; g.fillRect(a.x, a.y, b.x - a.x, b.y - a.y); g.globalAlpha = 1; }
+      if (['ellipse', 'triangle', 'range'].includes(d.type) && P.length >= (d.type === 'triangle' ? 3 : 2)) {
+        g.globalAlpha = 0.12; g.beginPath();
+        segments(d, P, w, h).forEach(([x1, y1], i) => i ? g.lineTo(x1, y1) : g.moveTo(x1, y1));
+        if (d.type === 'range') { g.beginPath(); g.rect(a.x, a.y, b.x - a.x, b.y - a.y); }
+        g.fill(); g.globalAlpha = 1;
+      }
+      if (d.type === 'range' && b !== a) {
+        const dp = b.p - a.p; g.textBaseline = 'middle';
+        g.fillText(`${dp >= 0 ? '+' : '-'}${fmtPrice(Math.abs(dp))} (${(dp / a.p * 100).toFixed(2)}%)`, (a.x + b.x) / 2 + 6, (a.y + b.y) / 2); g.textBaseline = 'alphabetic';
+      }
       if (d.type === 'channel' && P.length === 3) {
         const o = channelOffset(...P);
         g.globalAlpha = 0.1; g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.lineTo(b.x, b.y + o); g.lineTo(a.x, a.y + o); g.fill(); g.globalAlpha = 1;
@@ -116,7 +136,7 @@ const Draw = (() => {
 
   // what's under (x, y): {d, handle: point index or -1} or null. Selected drawing wins ties.
   function hit(pane, x, y) {
-    if (S.hideDrawings || !pane.bars.length) return null;
+    if (S.hideDrawings || S.lockDrawings || !pane.bars.length) return null;
     const cv = pane.canvas, w = cv.clientWidth, h = cv.clientHeight, G = geometry(pane);
     const items = list(pane.drawKey()), order = Draw.sel ? [Draw.sel.d, ...items.filter(d => d !== Draw.sel.d)] : [...items].reverse();
     for (const d of order) {
@@ -131,7 +151,7 @@ const Draw = (() => {
         continue;
       }
       const [a, b = a] = P;
-      if ((d.type === 'rect' || d.type === 'fib') && x >= Math.min(a.x, b.x) && x <= Math.max(a.x, b.x) && y >= Math.min(a.y, b.y) && y <= Math.max(a.y, b.y))
+      if (['rect', 'fib', 'range'].includes(d.type) && x >= Math.min(a.x, b.x) && x <= Math.max(a.x, b.x) && y >= Math.min(a.y, b.y) && y <= Math.max(a.y, b.y))
         return { d, handle: -1 };
       const toSeg = ([x1, y1, x2, y2]) => {
         const L = (x2 - x1) ** 2 + (y2 - y1) ** 2, u = L ? Math.max(0, Math.min(1, ((x - x1) * (x2 - x1) + (y - y1) * (y2 - y1)) / L)) : 0;
