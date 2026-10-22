@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import threading
 from pathlib import Path
 
@@ -34,30 +35,46 @@ def candles():
         return jsonify(error=str(e)), 502
 
 
-# Chart drawings live in one local JSON file: {"crypto:BTC": [drawing, ...], ...}
-DRAWINGS = Path(__file__).with_name("drawings.json")
-DRAWINGS_LOCK = threading.Lock()
+@app.get("/api/quotes")
+def quotes():
+    a = request.args
+    symbols = [s.strip() for s in a.get("symbols", "").split(",") if s.strip()]
+    try:
+        return jsonify(data_source.get_quotes(a["source"], symbols))
+    except KeyError as e:
+        return jsonify(error=f"missing parameter {e}"), 400
+    except Exception as e:
+        return jsonify(error=str(e)), 502
 
 
-@app.get("/api/drawings")
-def get_drawings():
-    return jsonify(json.loads(DRAWINGS.read_text()) if DRAWINGS.exists() else {})
+# UI state (settings, drawings, layouts, ...) lives in local JSON files under state/,
+# so it survives browser changes and localhost vs 127.0.0.1.
+STATE = Path(__file__).with_name("state")
+STATE_LOCK = threading.Lock()
+NAME = re.compile(r"^[a-z]{1,32}$")
+
+STATE.mkdir(exist_ok=True)
+if Path(__file__).with_name("drawings.json").exists() and not (STATE / "drawings.json").exists():
+    Path(__file__).with_name("drawings.json").replace(STATE / "drawings.json")  # pre-state/ location
 
 
-@app.put("/api/drawings/<path:key>")
-def put_drawings(key):
-    items = request.get_json(silent=True)
-    if not isinstance(items, list):
-        return jsonify(error="expected a JSON list"), 400
-    with DRAWINGS_LOCK:
-        all_ = json.loads(DRAWINGS.read_text()) if DRAWINGS.exists() else {}
-        if items:
-            all_[key] = items
-        else:
-            all_.pop(key, None)
-        tmp = DRAWINGS.with_suffix(".tmp")
-        tmp.write_text(json.dumps(all_, indent=1))
-        tmp.replace(DRAWINGS)  # atomic: a crash mid-write never leaves a half-written file
+@app.get("/api/state/<name>")
+def get_state(name):
+    f = STATE / f"{name}.json"
+    if not NAME.match(name):
+        return jsonify(error="bad name"), 400
+    return app.response_class(f.read_text() if f.exists() else "null", mimetype="application/json")
+
+
+@app.put("/api/state/<name>")
+def put_state(name):
+    if not NAME.match(name):
+        return jsonify(error="bad name"), 400
+    data = request.get_json(silent=True)
+    with STATE_LOCK:
+        tmp = STATE / f"{name}.tmp"
+        tmp.write_text(json.dumps(data, indent=1))
+        tmp.replace(STATE / f"{name}.json")  # atomic: a crash mid-write never leaves a half-written file
     return jsonify(ok=True)
 
 

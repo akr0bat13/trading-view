@@ -2,9 +2,12 @@
 
 Every source is ONE function: fetch(symbol, tf) -> list of candles
     [{"time": unix_seconds, "open": f, "high": f, "low": f, "close": f, "volume": f}, ...]
-where tf is one of TIMEFRAMES. Register it in SOURCES and it shows up in every
-pane's market dropdown. The browser polls it for live updates; crypto from
+where tf is one of TIMEFRAMES. Register it in SOURCES and it shows up in the symbol
+search and the watchlist. The browser polls it for live updates; crypto from
 Hyperliquid additionally streams over Hyperliquid's public websocket.
+
+Optional: "quotes": fn(symbols) -> {symbol: {"price": f, "prev": previous close}} for the
+watchlist. Without it, the watchlist uses the last two daily candles from fetch().
 
 Example — add Binance:
 
@@ -18,6 +21,7 @@ Example — add Binance:
     SOURCES["binance"] = {"label": "Binance", "fetch": binance, "symbols": ["BTCUSDT", "ETHUSDT"]}
 """
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import requests
 import yfinance as yf
@@ -40,6 +44,13 @@ def hyperliquid(symbol, tf):
             for c in r.json()]
 
 
+def hyperliquid_quotes(symbols):
+    meta, ctxs = requests.post(HL_INFO, json={"type": "metaAndAssetCtxs"}, timeout=10).json()
+    by_name = {u["name"]: c for u, c in zip(meta["universe"], ctxs)}
+    return {s: {"price": float(by_name[s]["markPx"]), "prev": float(by_name[s]["prevDayPx"])}
+            for s in symbols if s in by_name}
+
+
 # yfinance interval name + longest period Yahoo allows for it
 YF_TF = {"1m": ("1m", "5d"), "5m": ("5m", "30d"), "15m": ("15m", "60d"), "30m": ("30m", "60d"),
          "1h": ("1h", "180d"), "1d": ("1d", "5y"), "1w": ("1wk", "10y"), "1M": ("1mo", "max")}
@@ -54,18 +65,40 @@ def yahoo(symbol, tf):
             for ts, r in df.iterrows()]
 
 
-def yahoo_india(symbol, tf):
-    # "RELIANCE" -> NSE ticker "RELIANCE.NS"; explicit ".BO" (BSE) / ".NS" kept as is
+def nse(symbol):
+    # "RELIANCE" -> NSE ticker "RELIANCE.NS"; explicit ".BO" (BSE) / ".NS" / "^INDEX" kept as is
     symbol = symbol.upper()
-    return yahoo(symbol if "." in symbol or symbol.startswith("^") else symbol + ".NS", tf)
+    return symbol if "." in symbol or symbol.startswith("^") else symbol + ".NS"
+
+
+def yahoo_india(symbol, tf):
+    return yahoo(nse(symbol), tf)
+
+
+def yahoo_quotes(symbols, ticker=lambda s: s):
+    def one(s):
+        close = yf.Ticker(ticker(s)).history(period="5d", interval="1d")["Close"].dropna()
+        return {"price": float(close.iloc[-1]), "prev": float(close.iloc[-2]) if len(close) > 1 else None}
+    return _parallel(one, symbols)
+
+
+def _parallel(fn, symbols):
+    def safe(s):
+        try:
+            return fn(s)
+        except Exception:
+            return None  # one bad symbol must not blank the whole watchlist
+    with ThreadPoolExecutor(8) as ex:
+        return {s: q for s, q in zip(symbols, ex.map(safe, symbols)) if q}
 
 
 SOURCES = {
-    "crypto": {"label": "Crypto (Hyperliquid)", "fetch": hyperliquid, "live": "hyperliquid",
+    "crypto": {"label": "Crypto (Hyperliquid)", "fetch": hyperliquid, "quotes": hyperliquid_quotes, "live": "hyperliquid",
                "symbols": ["BTC", "ETH", "SOL", "HYPE", "XRP", "DOGE", "BNB", "AVAX", "LINK", "SUI"]},
-    "us": {"label": "US stocks", "fetch": yahoo,
+    "us": {"label": "US stocks", "fetch": yahoo, "quotes": yahoo_quotes,
            "symbols": ["AAPL", "TSLA", "NVDA", "MSFT", "AMZN", "META", "GOOGL", "AMD", "SPY", "QQQ"]},
     "india": {"label": "India (NSE/BSE)", "fetch": yahoo_india,
+              "quotes": lambda symbols: yahoo_quotes(symbols, nse),
               "symbols": ["RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "SBIN", "ITC",
                           "TATAMOTORS", "BHARTIARTL", "^NSEI"]},
 }
@@ -77,3 +110,14 @@ def get_candles(source, symbol, tf):
     if tf not in TIMEFRAMES:
         raise ValueError(f"unknown timeframe {tf!r}")
     return SOURCES[source]["fetch"](symbol, tf)
+
+
+def get_quotes(source, symbols):
+    src = SOURCES[source]
+    if "quotes" in src:
+        return src["quotes"](symbols)
+
+    def from_candles(s):
+        c = src["fetch"](s, "1d")
+        return {"price": c[-1]["close"], "prev": c[-2]["close"] if len(c) > 1 else None}
+    return _parallel(from_candles, symbols)

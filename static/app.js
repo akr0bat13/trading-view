@@ -38,16 +38,27 @@ const INDICATORS = [
 ];
 const POLL_MS = 15000;
 
-const store = {
-  get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
-  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { } },
+// UI state is kept in JSON files by the Flask backend (state/<name>.json), debounced saves.
+const State = {
+  data: {}, timers: {},
+  async load(...names) {
+    await Promise.all(names.map(async n => { try { this.data[n] = await (await fetch('/api/state/' + n)).json(); } catch { this.data[n] = null; } }));
+  },
+  save(name) {
+    clearTimeout(this.timers[name]);
+    this.timers[name] = setTimeout(() => fetch('/api/state/' + name, {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(this.data[name]),
+    }).catch(() => { }), 300);
+  },
 };
+const DEFAULT_WATCH = [['crypto', 'BTC'], ['crypto', 'ETH'], ['crypto', 'SOL'], ['crypto', 'HYPE'], ['us', 'AAPL'], ['us', 'TSLA'], ['us', 'NVDA'],
+  ['us', 'SPY'], ['india', 'RELIANCE'], ['india', 'TCS'], ['india', '^NSEI']].map(([source, symbol]) => ({ source, symbol }));
 
 let META; // /api/sources
-let count = store.get('tv.count', 4);
-const configs = DEFAULT_PANES.map((d, i) => ({ ...d, ...(store.get('tv.panes', [])[i] || {}) }));
+let S;    // settings: {count, active, panes: [cfg x8], watch: [{source, symbol}], wl}
 const panes = [];
-const saveConfigs = () => store.set('tv.panes', configs);
+const saveConfigs = () => State.save('settings');
+const activePane = () => panes[S.active] || panes[0];
 
 // ---------- Hyperliquid websocket (one shared connection) ----------
 const HL = {
@@ -58,9 +69,11 @@ const HL = {
     ws.onopen = () => {
       setBadge('hl', 'HL live', true);
       for (const k of this.subs.keys()) this.send('subscribe', k);
+      ws.send('{"method":"subscribe","subscription":{"type":"allMids"}}');
     };
     ws.onmessage = e => {
       const m = JSON.parse(e.data);
+      if (m.channel === 'allMids') return this.onMids?.(m.data.mids);
       if (m.channel !== 'candle') return;
       const c = m.data, bar = { time: c.t / 1000, open: +c.o, high: +c.h, low: +c.l, close: +c.c, volume: +c.v };
       this.subs.get(this.key(c.s, c.i))?.forEach(cb => cb(bar));
@@ -114,11 +127,6 @@ function tickFmt(t, type) { // axis labels in the browser's local time
 const decimals = p => p >= 100 ? 2 : p >= 1 ? 4 : p >= 0.01 ? 6 : 8;
 const fmtPrice = p => p.toLocaleString(undefined, { minimumFractionDigits: Math.min(decimals(p), 2), maximumFractionDigits: decimals(p) });
 
-function indicatorMenu() {
-  return [...new Set(INDICATORS.map(d => d.group))].map(g => `<div class="grp">${g}</div>` + INDICATORS.filter(d => d.group === g)
-    .map(d => `<label><input type="checkbox" value="${d.key}"> ${d.label}${g === 'PRO' ? '<span class="pro">PRO</span>' : ''}</label>`).join('')).join('');
-}
-
 // ---------- pane ----------
 class Pane {
   constructor(cfg) {
@@ -127,64 +135,72 @@ class Pane {
     el.className = 'pane';
     el.innerHTML = `
       <div class="bar">
-        <select class="src">${Object.entries(META.sources).map(([k, s]) => `<option value="${k}">${s.label}</option>`).join('')}</select>
-        <input class="sym" spellcheck="false" placeholder="Symbol">
-        <select class="tf">${META.timeframes.map(t => `<option>${t}</option>`).join('')}</select>
-        <span class="ind"><button type="button">Indicators</button><div class="ind-menu">${indicatorMenu()}</div></span>
-        <select class="draw" title="Drawing tools">${Draw.options()}</select>
+        <span class="title"><b></b><span class="meta"></span></span>
+        <span class="ohlc"></span>
         <span class="px">—</span><span class="chg"></span>
       </div>
-      <div class="chart-wrap"><div class="chart"></div><canvas></canvas><div class="msg"></div></div>`;
+      <div class="chart-wrap"><div class="chart"></div><canvas></canvas><div class="legend"></div><div class="msg"></div></div>`;
     const $ = s => el.querySelector(s);
-    [this.bar, this.px, this.chg, this.msg, this.canvas] = ['.bar', '.px', '.chg', '.msg', 'canvas'].map($);
-    const src = $('.src'), sym = $('.sym'), tf = $('.tf'), ind = $('.ind');
-    src.value = cfg.source; sym.value = cfg.symbol; tf.value = cfg.tf;
-    sym.setAttribute('list', 'dl-' + cfg.source);
-
-    src.onchange = () => { cfg.source = src.value; sym.setAttribute('list', 'dl-' + cfg.source); sym.value = cfg.symbol = META.sources[cfg.source].symbols[0]; this.load(); };
-    sym.onchange = () => { cfg.symbol = sym.value = this.normSymbol(sym.value); this.load(); };
-    sym.onfocus = () => sym.select();
-    tf.onchange = () => { cfg.tf = tf.value; this.load(); };
-    ind.querySelector('button').onclick = e => { e.stopPropagation(); ind.classList.toggle('open'); };
-    ind.querySelector('.ind-menu').onclick = e => e.stopPropagation();
-    ind.querySelectorAll('input').forEach(cb => {
-      cb.checked = cfg.ind.includes(cb.value);
-      cb.onchange = () => { cfg.ind = [...ind.querySelectorAll('input:checked')].map(x => x.value); saveConfigs(); this.buildIndicators(); };
-    });
+    [this.bar, this.px, this.chg, this.msg, this.canvas, this.legend, this.ohlc] = ['.bar', '.px', '.chg', '.msg', 'canvas', '.legend', '.ohlc'].map($);
+    $('.title').onclick = () => UI.openSymbolSearch();
+    el.addEventListener('pointerdown', () => setActive(panes.indexOf(this)), true);
 
     this.chart = LC.createChart($('.chart'), {
       autoSize: true,
-      layout: { background: { color: 'transparent' }, textColor: '#9aa1ad', fontSize: 11, panes: { separatorColor: '#262d38' } },
-      grid: { vertLines: { color: '#1e242d' }, horzLines: { color: '#1e242d' } },
+      layout: { background: { color: 'transparent' }, textColor: '#b2b5be', fontSize: 11, panes: { separatorColor: '#2a2e39' } },
+      grid: { vertLines: { color: '#1e222d' }, horzLines: { color: '#1e222d' } },
       crosshair: { mode: LC.CrosshairMode.Normal },
-      rightPriceScale: { borderColor: '#262d38' },
-      timeScale: { borderColor: '#262d38', timeVisible: true, tickMarkFormatter: tickFmt },
+      rightPriceScale: { borderColor: '#2a2e39' },
+      timeScale: { borderColor: '#2a2e39', timeVisible: true, tickMarkFormatter: tickFmt },
       localization: { timeFormatter: t => new Date(t * 1000).toLocaleString() },
     });
     this.candles = this.chart.addSeries(LC.CandlestickSeries, {
-      upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350',
+      upColor: '#089981', downColor: '#f23645', borderVisible: false, wickUpColor: '#089981', wickDownColor: '#f23645',
     });
     const redraw = () => this.scheduleDraw();
     this.chart.timeScale().subscribeVisibleLogicalRangeChange(redraw);
-    this.chart.subscribeCrosshairMove(redraw);
+    this.chart.subscribeCrosshairMove(p => { this.hovering = p.time != null; this.showOhlc(p.time != null ? p.seriesData.get(this.candles) : null); redraw(); });
     this.chart.timeScale().subscribeSizeChange(redraw);
-    Draw.attach(this, $('.draw'));
+    Draw.attach(this);
+    this.applyScale();
     this.buildIndicators();
     this.load();
   }
 
-  drawKey() { return `${this.cfg.source}:${this.cfg.symbol}`; }
-
-  normSymbol(s) {
-    s = s.trim();
-    return this.cfg.source === 'crypto' && /^k[A-Z]/.test(s) ? s : s.toUpperCase(); // HL has kPEPE, kBONK...
+  setSymbol(source, symbol) { Object.assign(this.cfg, { source, symbol: normSymbol(source, symbol) }); this.load(); }
+  setTf(tf) { this.cfg.tf = tf; this.load(); }
+  toggleInd(key) {
+    const i = this.cfg.ind.indexOf(key);
+    i < 0 ? this.cfg.ind.push(key) : this.cfg.ind.splice(i, 1);
+    saveConfigs(); this.buildIndicators();
   }
+  applyScale() {
+    this.candles.priceScale().applyOptions({ invertScale: !!this.cfg.invert, mode: this.cfg.log ? LC.PriceScaleMode.Logarithmic : LC.PriceScaleMode.Normal });
+  }
+  toggleScale(k) { this.cfg[k] = !this.cfg[k]; saveConfigs(); this.applyScale(); this.scheduleDraw(); }
+  resetView() {
+    this.chart.timeScale().fitContent();
+    this.chart.panes().forEach(p => p.getSeries().forEach(s => s.priceScale().applyOptions({ autoScale: true })));
+  }
+
+  // OHLC of the hovered (or last) bar, like TradingView's legend
+  showOhlc(b) {
+    b = b || this.bars.at(-1);
+    if (!b) return (this.ohlc.textContent = '');
+    const f = fmtPrice, cls = b.close >= b.open ? 'up' : 'down';
+    this.ohlc.innerHTML = ['O', 'H', 'L', 'C'].map((k, i) => `${k}<i class="${cls}">${f([b.open, b.high, b.low, b.close][i])}</i>`).join('');
+  }
+
+  drawKey() { return `${this.cfg.source}:${this.cfg.symbol}`; }
 
   async load() {
     saveConfigs();
     this.stop();
-    this.setTool('');
+    this.pending = null;
     const { source, symbol, tf } = this.cfg, token = this.token = {};
+    this.el.querySelector('.title b').textContent = symbol;
+    this.el.querySelector('.title .meta').textContent = `${tf} · ${META.sources[source].label}`;
+    if (this === activePane()) UI.syncHeader();
     this.msg.textContent = `Loading ${symbol} ${tf}…`;
     this.px.textContent = '—'; this.chg.textContent = '';
     let bars;
@@ -204,6 +220,7 @@ class Pane {
     this.chart.timeScale().fitContent();
     this.chart.timeScale().applyOptions({ rightOffset: 5 });
     this.refresh(false);
+    this.showOhlc();
 
     if (META.sources[source].live === 'hyperliquid') {
       this.stop = HL.on(symbol, tf, bar => this.onBar(bar));
@@ -230,6 +247,7 @@ class Pane {
     if (last && bar.time === last.time) this.bars[this.bars.length - 1] = bar; else this.bars.push(bar);
     this.candles.update(bar);
     this.msg.textContent = '';
+    if (!this.hovering) this.showOhlc();
     this.refresh(true);
   }
 
@@ -271,6 +289,9 @@ class Pane {
     }
     if (this.ind.vol) this.chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
     this.chart.panes().forEach((p, i) => p.setStretchFactor(i ? 1 : 3));
+    this.legend.innerHTML = INDICATORS.filter(d => on.includes(d.key)).map(d =>
+      `<span class="row" data-k="${d.key}"><span class="sw" style="background:${d.series ? d.series.at(-1)[1].color || '#787b86' : '#f0b90b'}"></span>${d.label}<button title="Remove">✕</button></span>`).join('');
+    this.legend.querySelectorAll('.row button').forEach(b => b.onclick = () => this.toggleInd(b.parentElement.dataset.k));
     this.computeIndicators();
   }
 
@@ -350,28 +371,46 @@ function prevClose(b) {
   return b[0].open;
 }
 
+const normSymbol = (source, s) => (s = s.trim(), source === 'crypto' && /^k[A-Z]/.test(s) ? s : s.toUpperCase()); // HL has kPEPE, kBONK...
+
 // ---------- grid ----------
 function setCount(n) {
-  count = n; store.set('tv.count', n);
-  document.querySelectorAll('#counts button').forEach(b => b.classList.toggle('on', +b.textContent === n));
+  S.count = n; saveConfigs();
+  document.querySelectorAll('#counts .tb').forEach(b => b.classList.toggle('on', +b.textContent === n));
   const [cols, rows] = LAYOUT[n], grid = document.getElementById('grid');
   grid.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
   grid.style.gridTemplateRows = `repeat(${rows}, minmax(0, 1fr))`;
+  grid.classList.toggle('multi', n > 1);
   while (panes.length > n) panes.pop().destroy();
-  while (panes.length < n) { const p = new Pane(configs[panes.length]); panes.push(p); grid.append(p.el); }
+  while (panes.length < n) { const p = new Pane(S.panes[panes.length]); panes.push(p); grid.append(p.el); }
+  setActive(Math.min(S.active || 0, n - 1));
+}
+
+function setActive(i) {
+  if (i < 0) return;
+  const changed = S.active !== i;
+  S.active = i;
+  panes.forEach((p, j) => p.el.classList.toggle('active', j === i));
+  UI.syncHeader();
+  if (changed) saveConfigs();
 }
 
 async function init() {
   META = await (await fetch('/api/sources')).json();
-  document.getElementById('datalists').innerHTML = Object.entries(META.sources)
-    .map(([k, s]) => `<datalist id="dl-${k}">${s.symbols.map(x => `<option value="${x}">`).join('')}</datalist>`).join('');
-  configs.forEach((c, i) => { if (!META.sources[c.source]) Object.assign(c, DEFAULT_PANES[i]); });
-  document.getElementById('counts').innerHTML = COUNTS.map(n => `<button type="button">${n}</button>`).join('');
-  document.querySelectorAll('#counts button').forEach(b => b.onclick = () => setCount(+b.textContent));
-  document.addEventListener('click', () => document.querySelectorAll('.ind.open').forEach(x => x.classList.remove('open')));
+  await State.load('settings', 'drawings');
+  const old = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } }; // pre-server-state settings
+  S = State.data.settings || { count: old('tv.count', 4), panes: old('tv.panes', []) };
+  S.panes = DEFAULT_PANES.map((d, i) => {
+    const c = { ...d, ...(S.panes?.[i] || {}) };
+    return META.sources[c.source] ? c : { ...d };
+  });
+  S.watch ||= DEFAULT_WATCH.filter(w => META.sources[w.source]);
+  S.wl ??= true;
+  State.data.settings = S;
+  Draw.load(State.data.drawings);
   if (Object.values(META.sources).some(s => s.live === 'hyperliquid')) { setBadge('hl', 'HL connecting', false); HL.connect(); }
   updateMarketBadges(); setInterval(updateMarketBadges, 30000);
-  await Draw.load();
-  setCount(COUNTS.includes(count) ? count : 4);
+  UI.init();
+  setCount(COUNTS.includes(S.count) ? S.count : 4);
 }
-init();
+document.addEventListener('DOMContentLoaded', init);

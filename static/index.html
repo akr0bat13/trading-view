@@ -7,20 +7,47 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header>
-    <strong class="logo">Multi-Chart</strong>
-    <label>Number of charts
-      <span id="counts" class="seg"></span>
-    </label>
+  <header class="top">
+    <button id="sym-btn" class="tb sym" title="Symbol search (just start typing)"></button>
+    <span class="sep"></span>
+    <span id="tfs" class="tfs"></span>
+    <span class="sep"></span>
+    <button id="ind-btn" class="tb" title="Indicators (/)"></button>
+    <span class="sep"></span>
+    <span class="count" title="Number of charts"><span id="counts" class="seg"></span></span>
     <span class="spacer"></span>
     <span id="badges"></span>
+    <button id="help-btn" class="tb icon" title="Keyboard shortcuts (?)"></button>
+    <button id="wl-btn" class="tb icon" title="Watchlist"></button>
   </header>
-  <main id="grid"></main>
-  <div id="datalists"></div>
+  <div class="body">
+    <nav id="tools"></nav>
+    <main id="grid"></main>
+    <aside id="watchlist"></aside>
+  </div>
+
+  <dialog id="sym-dlg" class="dlg">
+    <div class="dlg-head"><span class="dlg-title">Symbol search</span><button class="x" value="close">✕</button></div>
+    <input id="sym-q" spellcheck="false" autocomplete="off" placeholder="Search or type any ticker">
+    <div id="sym-tabs" class="tabs"></div>
+    <div id="sym-list" class="list"></div>
+  </dialog>
+
+  <dialog id="ind-dlg" class="dlg">
+    <div class="dlg-head"><span class="dlg-title">Indicators</span><button class="x" value="close">✕</button></div>
+    <input id="ind-q" spellcheck="false" autocomplete="off" placeholder="Search">
+    <div id="ind-list" class="list"></div>
+  </dialog>
+
+  <dialog id="help-dlg" class="dlg">
+    <div class="dlg-head"><span class="dlg-title">Keyboard shortcuts</span><button class="x" value="close">✕</button></div>
+    <div id="help-list" class="list"></div>
+  </dialog>
 
   <script src="vendor/lightweight-charts.standalone.production.js"></script>
   <script src="indicators.js"></script>
   <script src="drawings.js"></script>
   <script src="app.js"></script>
+  <script src="ui.js"></script>
 </body>
 </html>

@@ -1,5 +1,5 @@
 .venv/
 venv/
 __pycache__/
+state/
 drawings.json
-drawings.tmp
