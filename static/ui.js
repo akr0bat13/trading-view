@@ -40,7 +40,7 @@ const UI = (() => {
     ['Click a drawing', 'Select it; drag to move, drag a point to reshape'], ['Delete / Backspace', 'Remove selected drawing'],
     ['Ctrl/Cmd+Z', 'Undo drawing change'], ['Ctrl/Cmd+Shift+Z', 'Redo'], ['Double-click text', 'Edit text'],
     ...TOOLS.filter(t => t && t[2] && t[0]).map(t => [t[2], t[1]]),
-    ['Alt+I', 'Invert (flip) price scale'], ['Alt+L', 'Log scale'], ['Alt+R', 'Reset chart view'], ['Alt+W', 'Show / hide watchlist'],
+    ['Alt+I', 'Invert (flip) price scale'], ['Alt+L', 'Log scale'], ['Alt+R', 'Reset chart view'], ['Alt+W', 'Show / hide watchlist'], ['Alt+M or double-click header', 'Maximize chart (Esc restores)'],
   ];
   const KEYMAP = { KeyT: 'trend', KeyH: 'hline', KeyJ: 'hray', KeyV: 'vline', KeyC: 'cross', KeyF: 'fib' };
 
@@ -173,7 +173,10 @@ const UI = (() => {
     if (document.querySelector('dialog[open]')) return;
     if (e.target.closest('input, textarea, select')) return;
     const p = activePane(), alt = e.altKey && !e.ctrlKey && !e.metaKey;
-    if (e.key === 'Escape') { Draw.setTool(''); return Draw.deselect(); }
+    if (e.key === 'Escape') {
+      if (Draw.tool || Draw.sel) { Draw.setTool(''); return Draw.deselect(); }
+      return isMax() && toggleMax();
+    }
     if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ') { e.preventDefault(); return e.shiftKey ? Draw.redo() : Draw.undo(); }
     if ((e.ctrlKey || e.metaKey) && e.code === 'KeyY') { e.preventDefault(); return Draw.redo(); }
     if ((e.key === 'Delete' || e.key === 'Backspace') && Draw.sel) { e.preventDefault(); return Draw.remove(); }
@@ -181,7 +184,7 @@ const UI = (() => {
       const act = e.shiftKey ? { KeyR: () => Draw.setTool('rect') }[e.code] : {
         ...Object.fromEntries(Object.entries(KEYMAP).map(([c, t]) => [c, () => Draw.setTool(t)])),
         KeyI: () => p.toggleScale('invert'), KeyL: () => p.toggleScale('log'), KeyR: () => p.resetView(),
-        KeyW: () => toggleWatchlist(),
+        KeyW: () => toggleWatchlist(), KeyM: () => toggleMax(),
       }[e.code];
       if (act) { e.preventDefault(); act(); }
       return;

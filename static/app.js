@@ -107,11 +107,14 @@ class Pane {
         <span class="title"><b></b><span class="meta"></span></span>
         <span class="ohlc"></span>
         <span class="px">—</span><span class="chg"></span>
+        <button class="max-btn" title="Maximize chart (double-click the header, Alt+M)">⤢</button>
       </div>
       <div class="chart-wrap"><div class="chart"></div><canvas></canvas><div class="legend"></div><div class="msg"></div></div>`;
     const $ = s => el.querySelector(s);
     [this.bar, this.px, this.chg, this.msg, this.canvas, this.legend, this.ohlc] = ['.bar', '.px', '.chg', '.msg', 'canvas', '.legend', '.ohlc'].map($);
     $('.title').onclick = () => UI.openSymbolSearch();
+    $('.max-btn').onclick = () => toggleMax(this);
+    this.bar.ondblclick = e => e.target.closest('.title, .max-btn') || toggleMax(this);
     el.addEventListener('pointerdown', () => setActive(panes.indexOf(this)), true);
 
     this.chart = LC.createChart($('.chart'), {
@@ -368,6 +371,18 @@ function setCount(n) {
   while (panes.length < n) { const p = new Pane(S.panes[panes.length]); panes.push(p); grid.append(p.el); }
   setActive(Math.min(S.active || 0, n - 1));
 }
+
+// one chart fills the whole grid (CSS hides the others); no data is reloaded, charts just resize
+function toggleMax(pane = activePane()) {
+  const on = !pane.el.classList.contains('max');
+  panes.forEach(p => p.el.classList.remove('max'));
+  pane.el.classList.toggle('max', on);
+  document.getElementById('grid').classList.toggle('has-max', on);
+  pane.el.querySelector('.max-btn').textContent = on ? '⤡' : '⤢';
+  if (on) setActive(panes.indexOf(pane));
+  panes.forEach(p => p.scheduleDraw());
+}
+const isMax = () => document.getElementById('grid').classList.contains('has-max');
 
 function setActive(i) {
   if (i < 0 || panes[i]?.el.classList.contains('active')) return;

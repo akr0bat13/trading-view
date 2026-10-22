@@ -138,3 +138,5 @@ body.no-wl #watchlist { display: none; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .btn.danger { color: var(--down); }
 .legend .row .lbl { cursor: default; }
+.max-btn { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 14px; padding: 0 2px; }
+.max-btn:hover { color: var(--text); }
