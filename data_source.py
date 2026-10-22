@@ -101,11 +101,66 @@ def _parallel(fn, symbols):
         return {s: q for s, q in zip(symbols, ex.map(safe, symbols)) if q}
 
 
+# --- Moscow Exchange (MOEX ISS, free, no key) ---
+ISS = "https://iss.moex.com/iss"
+MSK = timezone(timedelta(hours=3))
+# tf -> (ISS interval, resample to N minutes or 1, lookback days). ISS has 1/10/60/24/7/31 only,
+# so 5m and 15m are built from 1-minute bars (short history), 30m from 10-minute bars.
+MOEX_TF = {"1m": (1, 1, 3), "5m": (1, 5, 4), "15m": (1, 15, 4), "30m": (10, 30, 20),
+           "1h": (60, 1, 200), "1d": (24, 1, 1500), "1w": (7, 1, 3650), "1M": (31, 1, 3650)}
+MOEX_INDEXES = {"IMOEX", "RTSI", "MOEXBC", "MOEXOG", "MOEXFN"}
+
+
+def moex(symbol, tf, before=None):
+    symbol = symbol.upper()
+    interval, minutes, days = MOEX_TF[tf]
+    till = datetime.fromtimestamp(before, MSK) - timedelta(seconds=1) if before else datetime.now(MSK)
+    market = "index" if symbol in MOEX_INDEXES else "shares"
+    url = f"{ISS}/engines/stock/markets/{market}/securities/{symbol}/candles.json"
+    rows, start = [], 0
+    while start < 6000:  # ISS pages are 500 rows
+        r = requests.get(url, params={"interval": interval, "start": start,
+                                      "from": (till - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S"),
+                                      "till": till.strftime("%Y-%m-%d %H:%M:%S")}, timeout=15)
+        r.raise_for_status()
+        block = r.json()["candles"]
+        cols = block["columns"]
+        page = [dict(zip(cols, row)) for row in block["data"]]
+        rows += page
+        if len(page) < 500:
+            break
+        start += 500
+    out = []
+    for c in rows:
+        t = int(datetime.strptime(c["begin"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=MSK).timestamp())
+        if minutes > 1:
+            t -= t % (minutes * 60)
+        if out and out[-1]["time"] == t:  # same resampled bucket
+            o = out[-1]
+            o["high"], o["low"] = max(o["high"], c["high"]), min(o["low"], c["low"])
+            o["close"], o["volume"] = c["close"], o["volume"] + c["volume"]
+        else:
+            out.append({"time": t, "open": c["open"], "high": c["high"], "low": c["low"], "close": c["close"], "volume": c["volume"]})
+    return out
+
+
+def moex_quotes(symbols):
+    r = requests.get(f"{ISS}/engines/stock/markets/shares/boards/TQBR/securities.json", timeout=15, params={
+        "iss.only": "securities,marketdata", "securities.columns": "SECID,PREVPRICE", "marketdata.columns": "SECID,LAST"})
+    r.raise_for_status()
+    j = r.json()
+    prev = dict(j["securities"]["data"])
+    last = dict(j["marketdata"]["data"])
+    return {s: {"price": float(last.get(s) or prev[s]), "prev": float(prev[s])} for s in symbols if s in prev and (last.get(s) or prev[s])}
+
+
 SOURCES = {
     "crypto": {"label": "Crypto (Hyperliquid)", "fetch": hyperliquid, "quotes": hyperliquid_quotes, "live": "hyperliquid",
                "symbols": ["BTC", "ETH", "SOL", "HYPE", "XRP", "DOGE", "BNB", "AVAX", "LINK", "SUI"]},
     "us": {"label": "US stocks", "fetch": yahoo, "quotes": yahoo_quotes,
            "symbols": ["AAPL", "TSLA", "NVDA", "MSFT", "AMZN", "META", "GOOGL", "AMD", "SPY", "QQQ"]},
+    "ru": {"label": "Russia (MOEX)", "fetch": moex, "quotes": moex_quotes,
+           "symbols": ["SBER", "GAZP", "LKOH", "YDEX", "ROSN", "GMKN", "NVTK", "TATN", "MOEX", "VTBR", "IMOEX"]},
     "india": {"label": "India (NSE/BSE)", "fetch": yahoo_india,
               "quotes": lambda symbols: yahoo_quotes(symbols, nse),
               "symbols": ["RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "SBIN", "ITC",

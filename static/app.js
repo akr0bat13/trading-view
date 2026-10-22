@@ -21,7 +21,7 @@ const State = {
   },
 };
 const DEFAULT_WATCH = [['crypto', 'BTC'], ['crypto', 'ETH'], ['crypto', 'SOL'], ['crypto', 'HYPE'], ['us', 'AAPL'], ['us', 'TSLA'], ['us', 'NVDA'],
-  ['us', 'SPY'], ['india', 'RELIANCE'], ['india', 'TCS'], ['india', '^NSEI']].map(([source, symbol]) => ({ source, symbol }));
+  ['us', 'SPY'], ['ru', 'SBER'], ['ru', 'GAZP'], ['india', 'RELIANCE'], ['india', 'TCS'], ['india', '^NSEI']].map(([source, symbol]) => ({ source, symbol }));
 
 let META; // /api/sources
 let S;    // settings: {count, active, panes: [cfg x8], watch: [{source, symbol}], wl}
@@ -72,7 +72,7 @@ function marketOpen(tz, open, close) { // ponytail: weekdays + hours only, excha
   const mins = +p.hour * 60 + +p.minute;
   return !['Sat', 'Sun'].includes(p.weekday) && mins >= open && mins < close;
 }
-const MARKETS = { us: ['US', 'America/New_York', 570, 960], india: ['India', 'Asia/Kolkata', 555, 930] };
+const MARKETS = { us: ['US', 'America/New_York', 570, 960], india: ['India', 'Asia/Kolkata', 555, 930], ru: ['Russia', 'Europe/Moscow', 600, 1130] };
 function setBadge(id, text, on) {
   let el = document.getElementById('badge-' + id);
   if (!el) { el = document.createElement('span'); el.id = 'badge-' + id; el.className = 'badge'; document.getElementById('badges').append(el); }
