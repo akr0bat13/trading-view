@@ -16,11 +16,16 @@ const BotMarkers = (() => {
     for (const t of trades) {
       if (!t.opened_at) continue; // skipped, rejected or failed: nothing happened on the chart
       const open = snap(bars, secs(t.opened_at));
-      if (open != null) out.push({ time: open, position: 'belowBar', shape: 'arrowUp', color: BLUE, text: `Bot BUY ${Number(t.qty)}` });
+      const short = t.side === 'short'; // a short enters with a down arrow above the bar and leaves with an up arrow below it
+      if (open != null) out.push({
+        time: open, position: short ? 'aboveBar' : 'belowBar', shape: short ? 'arrowDown' : 'arrowUp', color: BLUE,
+        text: `Bot ${short ? 'SHORT' : 'BUY'} ${Number(t.qty)}`,
+      });
       if (t.closed_at) {
         const close = snap(bars, secs(t.closed_at)), pnl = Number(t.pnl);
         if (close != null) out.push({
-          time: close, position: 'aboveBar', shape: 'arrowDown', color: pnl >= 0 ? GREEN : RED,
+          time: close, position: short ? 'belowBar' : 'aboveBar', shape: short ? 'arrowUp' : 'arrowDown',
+          color: pnl >= 0 ? GREEN : RED,
           text: `${t.exit_reason === 'take_profit' ? 'TP' : t.exit_reason === 'stop_loss' ? 'SL' : 'Exit'} ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}`,
         });
       }
