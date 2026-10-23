@@ -24,4 +24,10 @@ assert.deepStrictEqual(m.map(x => [x.time - 1700000000, x.shape, x.text]), [
 ]);
 assert.strictEqual(m[1].color, '#089981');
 assert.strictEqual(m[2].color, '#f23645');
+
+const shorts = BM.build([{ status: 'closed', side: 'short', opened_at: iso(3700), qty: '0.01', closed_at: iso(7300), exit_reason: 'take_profit', pnl: '5' }], bars);
+assert.deepStrictEqual(shorts.map(x => [x.shape, x.position, x.text]), [
+  ['arrowDown', 'aboveBar', 'Bot SHORT 0.01'],
+  ['arrowUp', 'belowBar', 'TP +5.00'],
+]);
 console.log('botmarkers ok');
