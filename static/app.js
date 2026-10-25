@@ -138,6 +138,9 @@ class Pane {
     });
     this.makeMain();
     const redraw = () => this.scheduleDraw();
+    // on resize the canvas is cleared and the chart's coordinates change: repaint in the same frame instead of waiting for the next crosshair/range event
+    new ResizeObserver(() => this.draw()).observe($('.chart-wrap'));
+    this.chart.timeScale().subscribeSizeChange(() => this.draw());
     this.chart.timeScale().subscribeVisibleLogicalRangeChange(r => { redraw(); if (r && r.from < 20 && this.userMoved) this.loadOlder(); });
     this.chart.subscribeCrosshairMove(p => {
       this.showOhlc(p.time != null ? this.barAt(p.time) : null); redraw();
@@ -418,8 +421,8 @@ class Pane {
     cv.width = W * dpr; cv.height = H * dpr;
     const g = cv.getContext('2d');
     g.scale(dpr, dpr);
-    const ts = this.chart.timeScale(), plotW = ts.width(), plotH = this.chart.panes()[0].getHeight(), y = p => this.candles.priceToCoordinate(p);
-    if (!this.bars.length || !plotW) return;
+    const ts = this.chart.timeScale(), plotW = ts.width(), plotH = this.chart.panes()[0]?.getHeight(), y = p => this.candles.priceToCoordinate(p);
+    if (!this.bars.length || !plotW || plotH == null) return;
     g.save(); g.beginPath(); g.rect(0, 0, plotW, plotH); g.clip();
 
     if (this.fvgs) {
