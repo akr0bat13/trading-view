@@ -42,6 +42,16 @@
       <span class="tr-demo">DEMO · virtual money</span>
       <button id="tr-close" class="tb icon" title="Hide the trading panel">✕</button>
     </div>
+    <div id="tr-replay" hidden>
+      <span class="rp-tag">REPLAY</span><b id="rp-sym-l"></b>
+      <button id="rp-play" class="tb" title="Play / pause (Space)"></button>
+      <button id="rp-step" class="tb" title="One bar forward">⏭ Step</button>
+      <span id="rp-speed" class="seg" title="Playback speed: 1× = one bar per second"><button class="tb" data-v="1">1×</button><button class="tb" data-v="2">2×</button><button class="tb" data-v="5">5×</button><button class="tb" data-v="10">10×</button></span>
+      <span class="rp-now" title="Simulated time: everything after it is hidden">⏱ <b id="rp-time"></b></span>
+      <span class="spacer"></span>
+      <input id="rp-seek" type="datetime-local" title="Go to a moment of the session (back in time undoes later trades)"><button id="rp-go" class="tb">Go</button>
+      <button id="rp-attach" class="tb" title="Show this session on the active chart">Show on chart</button>
+    </div>
     <div id="tr-warn"></div>
     <div class="tr-body">
       <form id="tr-form" autocomplete="off">
@@ -51,7 +61,7 @@
         <label class="field"><span>Quantity</span><input id="tr-qty" type="number" step="any" min="0" value="1" required></label>
         <label class="field" id="tr-price-f"><span>Limit price</span><input id="tr-price" type="number" step="any" min="0"></label>
         <button id="tr-submit" class="btn primary"></button>
-        <div class="tr-note">Market orders fill at the server's last price ± slippage; stock quotes can be delayed.</div>
+        <div id="tr-note" class="tr-note"></div>
       </form>
       <div class="tr-tables"><div id="tr-tabs" class="tabs"></div><div id="tr-table"></div></div>
     </div>
@@ -96,6 +106,22 @@
       <div id="acct-err" class="err"></div>
     </div>
     <div class="dlg-foot"><span class="hint">Virtual money only. No real orders are ever sent.</span><span class="spacer"></span><button id="acct-create" class="btn primary">Create</button></div>
+  </dialog>
+
+  <dialog id="rp-dlg" class="dlg narrow">
+    <div class="dlg-head"><span class="dlg-title">Replay trading</span><button class="x" value="close">✕</button></div>
+    <div class="form">
+      <label class="field"><span>Market</span><select id="rp-src" class="tb sel"></select></label>
+      <label class="field"><span>Symbol</span><input id="rp-sym" spellcheck="false" placeholder="BTC, AAPL, SBER"></label>
+      <label class="field"><span>Bars</span><select id="rp-tf" class="tb sel"><option>1m</option><option>5m</option><option>15m</option><option>30m</option><option>1h</option><option value="1d">D</option></select></label>
+      <label class="field"><span>Start</span><input id="rp-start" type="datetime-local"></label>
+      <label class="field"><span>Starting capital</span><input id="rp-initial" type="number" min="1" step="any" value="10000"></label>
+      <label class="field"><span>Fee, bps</span><input id="rp-fee" type="number" min="0" max="1000" step="any" value="5"></label>
+      <label class="field"><span>Slippage, bps</span><input id="rp-slip" type="number" min="0" max="1000" step="any" value="2"></label>
+      <div class="hint">The chart shows only bars that closed before the simulated time. Space plays and pauses. Crypto history comes from Binance; up to 20,000 bars are loaded.</div>
+      <div id="rp-err" class="err"></div>
+    </div>
+    <div class="dlg-foot"><span class="hint">Past results do not guarantee future profit.</span><span class="spacer"></span><button id="rp-create" class="btn primary">Start replay</button></div>
   </dialog>
 
   <dialog id="help-dlg" class="dlg">

@@ -158,6 +158,42 @@ SOURCES = {
 }
 
 
+# --- deep history for replay ---
+# Hyperliquid serves only its latest ~5000 candles, too few for "replay last year" on intraday timeframes; Binance's public
+# market-data mirror (no key) has spot klines back to 2017. Used for replay only, live crypto charts stay on Hyperliquid.
+BINANCE = "https://data-api.binance.vision/api/v3/klines"
+
+
+def binance(symbol, tf, before=None):
+    params = {"symbol": symbol.upper() + "USDT", "interval": tf, "limit": 1000}
+    if before:
+        params["endTime"] = before * 1000 - 1
+    r = requests.get(BINANCE, params=params, timeout=15)
+    if r.status_code == 400:
+        raise ValueError(f"Binance has no {symbol.upper()}USDT history")
+    r.raise_for_status()
+    return [{"time": k[0] // 1000, "open": float(k[1]), "high": float(k[2]), "low": float(k[3]),
+             "close": float(k[4]), "volume": float(k[5])} for k in r.json()]
+
+
+HISTORY = {"crypto": binance}
+
+
+def history(source, symbol, tf, start, end, warmup=300):
+    """Bars of [start - warmup bars, end), paged backwards from end. Stops early when the source has no older data."""
+    fetch = HISTORY.get(source) or SOURCES[source]["fetch"]
+    out, before = [], end
+    for _ in range(200):  # ponytail: a page per request, ~200k bars at most; enough for a year of 5m
+        page = [b for b in fetch(symbol, tf, before) if b["time"] < before]
+        if not page:
+            break
+        out = page + out
+        before = page[0]["time"]
+        if before <= start - warmup * TF_SECONDS[tf]:
+            break
+    return [b for b in out if b["time"] >= start - warmup * TF_SECONDS[tf]]
+
+
 def get_candles(source, symbol, tf, before=None):
     if source not in SOURCES:
         raise ValueError(f"unknown source {source!r}")

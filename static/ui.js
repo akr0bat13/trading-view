@@ -91,7 +91,7 @@ const UI = (() => {
     ['Click a drawing', 'Select it; drag to move, drag a point to reshape'], ['Delete / Backspace', 'Remove selected drawing'],
     ['Ctrl/Cmd+Z', 'Undo drawing change'], ['Ctrl/Cmd+Shift+Z', 'Redo'], ['Double-click text', 'Edit text'],
     ...TOOLS.filter(t => t && t[2] && t[0]).map(t => [t[2], t[1]]),
-    ['Alt+I', 'Invert (flip) price scale'], ['Alt+L', 'Log scale'], ['Alt+R', 'Reset chart view'], ['Alt+W', 'Show / hide watchlist'], ['Alt+S', 'Save chart as PNG'], ['Alt+M or double-click header', 'Maximize chart (Esc restores)'],
+    ['Space', 'Replay: play / pause'], ['Alt+I', 'Invert (flip) price scale'], ['Alt+L', 'Log scale'], ['Alt+R', 'Reset chart view'], ['Alt+W', 'Show / hide watchlist'], ['Alt+S', 'Save chart as PNG'], ['Alt+M or double-click header', 'Maximize chart (Esc restores)'],
   ];
   const KEYMAP = { KeyT: 'trend', KeyH: 'hline', KeyJ: 'hray', KeyV: 'vline', KeyC: 'cross', KeyF: 'fib' };
 
@@ -290,6 +290,7 @@ const UI = (() => {
       return;
     }
     if (e.ctrlKey || e.metaKey) return;
+    if (e.code === 'Space' && !e.target.closest('button') && Trading.onSpace()) return e.preventDefault(); // play / pause replay
     if (e.key === '/') { e.preventDefault(); return openIndicators(); }
     if (e.key === '?') { e.preventDefault(); return $('#help-dlg').showModal(); }
     if (/^[\w^.]$/.test(e.key)) { e.preventDefault(); openSymbolSearch(e.key); }

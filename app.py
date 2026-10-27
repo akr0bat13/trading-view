@@ -170,10 +170,33 @@ def fresh_mark(key):
     return bars[-1]["close"] if bars and time.time() - bars[-1]["time"] < STALE else None
 
 
-def trading_state(account_id):
+def replay_of(a):
+    r = a["mode"] == "replay" and sim.session(DB, a["id"])
+    if not r:
+        raise KeyError("replay session not found")
+    return r
+
+
+def clock(a, key):
+    """(time, server price of key, do market orders fill right away). Paper: wall clock and the live price. Replay: the
+    cursor and the last closed bar's close; its market orders wait for the next bar's open, like any order placed between bars."""
+    if a["mode"] == "replay":
+        r = replay_of(a)
+        if key != f"{r['source']}:{r['symbol']}":
+            raise ValueError(f"this replay trades {r['symbol']} only")
+        return r["cursor"], sim.last_price(DB, a["id"]), False
+    sync(a)  # fills due before this action happen first
+    return int(time.time()), fresh_mark(key), True
+
+
+def trading_state(account_id, **extra):
     a = sim.account(DB, owner(), account_id)
-    marks, errors = sync(a)
-    return jsonify(**sim.snapshot(DB, sim.account(DB, owner(), account_id), marks), errors=errors)
+    if a["mode"] == "replay":
+        r = replay_of(a)
+        marks, errors, extra["replay"] = {f"{r['source']}:{r['symbol']}": sim.last_price(DB, a["id"])}, {}, dict(r)
+    else:
+        marks, errors = sync(a)
+    return jsonify(**sim.snapshot(DB, sim.account(DB, owner(), account_id), marks), errors=errors, **extra)
 
 
 def client_id(j):
@@ -230,16 +253,16 @@ def trading_order(aid):
     if not symbol or source not in data_source.SOURCES:
         raise ValueError("unknown instrument")
     key = f"{source}:{symbol}"
-    sync(a)  # fills due before this order happen first
-    mark = fresh_mark(key) if j.get("type") == "market" else None
-    sim.place_order(DB, owner(), aid, cid, key, j.get("side"), j.get("type"), qty, price=j.get("price"),
-                        mark=mark, now=int(time.time()), fill_at=mark and sim.slipped(mark, j.get("side"), a["slippage_bps"]))
+    now, mark, instant = clock(a, key)
+    sim.place_order(DB, owner(), aid, cid, key, j.get("side"), j.get("type"), qty, price=j.get("price"), mark=mark, now=now,
+                    fill_at=instant and j.get("type") == "market" and mark and sim.slipped(mark, j.get("side"), a["slippage_bps"]) or None)
     return trading_state(aid)
 
 
 @trading.delete("/accounts/<int:aid>/orders/<int:oid>")
 def trading_cancel(aid, oid):
-    sim.cancel_order(DB, owner(), aid, oid)
+    a = sim.account(DB, owner(), aid)
+    sim.cancel_order(DB, owner(), aid, oid, now=replay_of(a)["cursor"] if a["mode"] == "replay" else int(time.time()))
     return trading_state(aid)
 
 
@@ -248,22 +271,97 @@ def trading_close(aid):
     """Body: {client_order_id, symbol: "source:SYMBOL"}: market order for the whole position."""
     a, j = sim.account(DB, owner(), aid), request.get_json(silent=True) or {}
     key = str(j.get("symbol"))
-    sync(a)
+    now, mark, instant = clock(a, key)
     p = sim.position(DB, aid, key)
     if p is None:
         raise ValueError("no open position")
-    side, mark = "sell" if p["qty"] > 0 else "buy", fresh_mark(key)
+    side = "sell" if p["qty"] > 0 else "buy"
     sim.place_order(DB, owner(), aid, client_id(j), key, side, "market", abs(p["qty"]), mark=mark,
-                    now=int(time.time()), fill_at=mark and sim.slipped(mark, side, a["slippage_bps"]))
+                    now=now, fill_at=instant and mark and sim.slipped(mark, side, a["slippage_bps"]) or None)
     return trading_state(aid)
 
 
 @trading.put("/accounts/<int:aid>/exits")
 def trading_exits(aid):
     """Body: {symbol: "source:SYMBOL", sl, tp}; null removes a level."""
-    j = request.get_json(silent=True) or {}
+    a, j = sim.account(DB, owner(), aid), request.get_json(silent=True) or {}
     key = str(j.get("symbol"))
-    sim.set_exits(DB, owner(), aid, key, fresh_mark(key), j.get("sl"), j.get("tp"), now=int(time.time()))
+    now, mark, _ = clock(a, key)
+    sim.set_exits(DB, owner(), aid, key, mark, j.get("sl"), j.get("tp"), now=now)
+    return trading_state(aid)
+
+
+# ---------- replay: the server owns the simulated time; bars after the cursor never leave it ----------
+REPLAY_BARS = 20000  # bars after the start downloaded per session (a year of 30m, ~2 weeks of 1m)
+
+
+@trading.post("/replays")
+def replay_create():
+    """Body: {name, source, symbol, tf, start (unix s), initial, fee_bps, slippage_bps}."""
+    j = request.get_json(silent=True) or {}
+    source, symbol, tf, start = j.get("source"), str(j.get("symbol") or "").strip(), j.get("tf"), j.get("start")
+    if source not in CURRENCY:
+        raise ValueError("replay supports crypto, US stocks and MOEX")
+    if tf not in sim.TF_SECONDS or tf == "1w":
+        raise ValueError("pick a timeframe from 1m to 1d")
+    now = int(time.time())
+    if not isinstance(start, int) or not 0 < start < now - 86400:
+        raise ValueError("pick a start at least a day in the past")
+    start -= start % sim.TF_SECONDS[tf]
+    try:
+        bars = data_source.history(source, symbol, tf, start, min(now, start + REPLAY_BARS * sim.TF_SECONDS[tf]))
+    except ValueError:
+        raise
+    except Exception as e:
+        return jsonify(error=f"could not load history: {e}"), 502
+    if bars and bars[0]["time"] > start:
+        raise ValueError(f"{symbol} {tf} history is only available from {time.strftime('%Y-%m-%d %H:%M', time.gmtime(bars[0]['time']))} UTC")
+    aid = sim.create_replay(DB, owner(), j.get("name") or f"Replay {symbol} {tf}", source, symbol, tf, CURRENCY[source], j.get("initial"), bars, start,
+                            fee_bps=j.get("fee_bps", 5), slippage_bps=j.get("slippage_bps", 2))
+    return trading_state(aid), 201
+
+
+@trading.get("/replays/<int:aid>/bars")
+def replay_bars(aid):
+    replay_of(sim.account(DB, owner(), aid))
+    return jsonify(sim.known_bars(DB, aid, request.args.get("tf", ""), request.args.get("before", type=int)))
+
+
+@trading.post("/replays/<int:aid>/step")
+def replay_step(aid):
+    """Body: {n, tf}: close the next n bars. Answers with the account and the chart's last bars at tf."""
+    j = request.get_json(silent=True) or {}
+    n = j.get("n", 1)
+    if not isinstance(n, int) or not 1 <= n <= 5000:
+        raise ValueError("n must be 1..5000")
+    stepped = sim.step(DB, owner(), aid, n)
+    return trading_state(aid, stepped=stepped, bars=sim.known_bars(DB, aid, j.get("tf", ""), limit=3))
+
+
+@trading.post("/replays/<int:aid>/seek")
+def replay_seek(aid):
+    """Body: {time}: forward runs every bar on the way through the account; back rewinds the account to that moment."""
+    a, t = sim.account(DB, owner(), aid), (request.get_json(silent=True) or {}).get("time")
+    r = replay_of(a)
+    if not isinstance(t, int):
+        raise ValueError("time (unix seconds) is required")
+    if t < r["cursor"]:
+        sim.rewind(DB, owner(), aid, t)
+    else:
+        n = DB.execute("SELECT COUNT(*) FROM bars WHERE account_id = ? AND time >= ? AND time + ? <= ?",
+                       (aid, r["cursor"], sim.TF_SECONDS[r["tf"]], t)).fetchone()[0]
+        sim.step(DB, owner(), aid, n)
+    return trading_state(aid)
+
+
+@trading.put("/replays/<int:aid>")
+def replay_settings(aid):
+    """Body: {speed}: remembered so a reopened session plays at the same speed."""
+    replay_of(sim.account(DB, owner(), aid))
+    speed = (request.get_json(silent=True) or {}).get("speed")
+    if speed not in (1, 2, 5, 10):
+        raise ValueError("speed must be 1, 2, 5 or 10")
+    DB.execute("UPDATE replay SET speed = ? WHERE account_id = ?", (speed, aid))
     return trading_state(aid)
 
 
