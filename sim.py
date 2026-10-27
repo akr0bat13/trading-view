@@ -1,0 +1,262 @@
+"""Virtual execution engine for paper and replay trading (see docs/trading.md).
+
+There is no broker or exchange client here and none may be added: every fill is computed from candles or from a
+price the server itself fetched from data_source. Money lives in SQLite ($STATE_DIR/trading.db); each order, fill,
+position change and ledger entry is written in one transaction, and every read and write is scoped to its owner.
+
+Account model: linear instruments in the account currency, long and short, no leverage (margin = |qty| * avg_price).
+balance = initial + realized PnL - fees;  equity = balance + unrealized;  free = equity - margin - reserved by open limits.
+"""
+import math
+import sqlite3
+from contextlib import contextmanager
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS accounts (
+  id INTEGER PRIMARY KEY, owner TEXT NOT NULL, name TEXT NOT NULL,
+  mode TEXT NOT NULL CHECK (mode IN ('paper', 'replay')), currency TEXT NOT NULL,
+  initial REAL NOT NULL, cash REAL NOT NULL, fee_bps REAL NOT NULL, slippage_bps REAL NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active', created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS replay (  -- one replay session per replay account
+  account_id INTEGER PRIMARY KEY REFERENCES accounts ON DELETE CASCADE,
+  source TEXT NOT NULL, symbol TEXT NOT NULL, tf TEXT NOT NULL,
+  start INTEGER NOT NULL, end INTEGER NOT NULL, cursor INTEGER NOT NULL, speed REAL NOT NULL DEFAULT 1);
+CREATE TABLE IF NOT EXISTS bars (  -- historical market data frozen for a replay session, never mixed with fills
+  account_id INTEGER NOT NULL REFERENCES accounts ON DELETE CASCADE, time INTEGER NOT NULL,
+  open REAL NOT NULL, high REAL NOT NULL, low REAL NOT NULL, close REAL NOT NULL, volume REAL NOT NULL,
+  PRIMARY KEY (account_id, time));
+CREATE TABLE IF NOT EXISTS orders (
+  id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL REFERENCES accounts ON DELETE CASCADE,
+  client_order_id TEXT NOT NULL, symbol TEXT NOT NULL,
+  side TEXT NOT NULL CHECK (side IN ('buy', 'sell')), type TEXT NOT NULL CHECK (type IN ('market', 'limit')),
+  qty REAL NOT NULL, price REAL, status TEXT NOT NULL CHECK (status IN ('open', 'filled', 'cancelled', 'rejected')),
+  reason TEXT, created_at INTEGER NOT NULL,
+  UNIQUE (account_id, client_order_id));  -- a retried request finds its order instead of making a second one
+CREATE TABLE IF NOT EXISTS fills (
+  id INTEGER PRIMARY KEY, order_id INTEGER NOT NULL UNIQUE REFERENCES orders ON DELETE CASCADE,
+  account_id INTEGER NOT NULL REFERENCES accounts ON DELETE CASCADE, symbol TEXT NOT NULL, side TEXT NOT NULL,
+  qty REAL NOT NULL, price REAL NOT NULL, fee REAL NOT NULL, realized REAL NOT NULL, time INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS positions (  -- qty < 0 is a short
+  account_id INTEGER NOT NULL REFERENCES accounts ON DELETE CASCADE, symbol TEXT NOT NULL,
+  qty REAL NOT NULL, avg_price REAL NOT NULL, sl REAL, tp REAL, PRIMARY KEY (account_id, symbol));
+CREATE TABLE IF NOT EXISTS ledger (
+  id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL REFERENCES accounts ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('deposit', 'fee', 'pnl')), delta REAL NOT NULL, balance_after REAL NOT NULL,
+  fill_id INTEGER REFERENCES fills ON DELETE CASCADE, time INTEGER NOT NULL);
+"""
+
+
+def connect(path):
+    db = sqlite3.connect(path, isolation_level=None, check_same_thread=False)  # transactions are explicit, see tx()
+    db.row_factory = sqlite3.Row
+    db.execute("PRAGMA foreign_keys = ON")
+    db.execute("PRAGMA journal_mode = WAL")
+    db.executescript(SCHEMA)
+    return db
+
+
+@contextmanager
+def tx(db):
+    db.execute("BEGIN IMMEDIATE")  # takes the write lock up front: two requests can't both spend the same cash
+    try:
+        yield
+    except BaseException:
+        db.execute("ROLLBACK")
+        raise
+    db.execute("COMMIT")
+
+
+# ---------- pure execution rules ----------
+
+def slipped(price, side, bps):
+    """Market orders and stop losses fill worse by bps: buys higher, sells lower."""
+    return price * (1 + bps / 1e4) if side == "buy" else price * (1 - bps / 1e4)
+
+
+def apply_fill(qty, avg, delta, price):
+    """Position (qty, avg) after a signed fill of delta at price -> (qty, avg, realized PnL of the closed part)."""
+    if qty == 0 or (qty > 0) == (delta > 0):
+        new = qty + delta
+        return new, (abs(qty) * avg + abs(delta) * price) / abs(new), 0.0
+    closed = min(abs(qty), abs(delta))
+    realized = closed * (price - avg) * (1 if qty > 0 else -1)
+    new = qty + delta
+    if abs(new) < 1e-12:
+        return 0.0, 0.0, realized
+    return new, avg if (new > 0) == (qty > 0) else price, realized  # flipped: the remainder opened at this price
+
+
+def match(order, bar, slippage_bps):
+    """Fill price of an open order on a bar, or None. Only bars that opened at or after the order was placed count,
+    so the bar the order was placed on (already known to the trader) can never fill it.
+    OHLC does not tell the path inside a bar: a limit fills if the bar touches its price, at the open if the bar gapped through it."""
+    if bar["time"] < order["created_at"]:
+        return None
+    if order["type"] == "market":
+        return slipped(bar["open"], order["side"], slippage_bps)
+    p = order["price"]
+    if order["side"] == "buy":
+        return min(bar["open"], p) if bar["low"] <= p else None
+    return max(bar["open"], p) if bar["high"] >= p else None
+
+
+def exit_hit(qty, sl, tp, bar, slippage_bps):
+    """(price, 'sl' | 'tp') when a bar triggers the position's stop loss or take profit, else None.
+    Both inside one bar: the stop loss is assumed first (the conservative reading). A gap past the level fills at the open."""
+    if not qty:
+        return None
+    long, o = qty > 0, bar["open"]
+    side = "sell" if long else "buy"
+    if sl is not None and (bar["low"] <= sl if long else bar["high"] >= sl):
+        return slipped(min(o, sl) if long else max(o, sl), side, slippage_bps), "sl"
+    if tp is not None and (bar["high"] >= tp if long else bar["low"] <= tp):
+        return (max(o, tp) if long else min(o, tp)), "tp"
+    return None
+
+
+def _num(x):
+    return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x) and x > 0
+
+
+def check_order(side, type_, qty, price, ref):
+    """Reason the order is malformed, or None. ref = the price it would fill at (limit price or server mark)."""
+    if side not in ("buy", "sell"):
+        return "side must be buy or sell"
+    if type_ not in ("market", "limit"):
+        return "type must be market or limit"
+    if not _num(qty):
+        return "quantity must be a positive number"
+    if type_ == "limit" and not _num(price):
+        return "limit price must be a positive number"
+    if not _num(ref):
+        return "no market price"  # data error: reject rather than fill at a made-up price
+    return None
+
+
+# ---------- storage ----------
+
+def account(db, owner, account_id):
+    a = db.execute("SELECT * FROM accounts WHERE id = ? AND owner = ?", (account_id, owner)).fetchone()
+    if a is None:
+        raise KeyError("account not found")  # someone else's account looks exactly like a missing one
+    return a
+
+
+def create_account(db, owner, name, mode, currency, initial, fee_bps=5.0, slippage_bps=2.0, now=0):
+    if not _num(initial):
+        raise ValueError("initial capital must be a positive number")
+    if not all(isinstance(x, (int, float)) and 0 <= x <= 1000 for x in (fee_bps, slippage_bps)):
+        raise ValueError("fee and slippage must be between 0 and 1000 bps")
+    if not (isinstance(name, str) and name.strip()):
+        raise ValueError("name is required")
+    with tx(db):
+        aid = db.execute("INSERT INTO accounts (owner, name, mode, currency, initial, cash, fee_bps, slippage_bps, created_at)"
+                         " VALUES (?,?,?,?,?,?,?,?,?)", (owner, name.strip(), mode, currency, initial, initial, fee_bps, slippage_bps, now)).lastrowid
+        db.execute("INSERT INTO ledger (account_id, kind, delta, balance_after, time) VALUES (?, 'deposit', ?, ?, ?)", (aid, initial, initial, now))
+    return aid
+
+
+def summary(db, a, marks):
+    """Balance figures; marks = {symbol: last price}, positions without a mark are valued at their average price."""
+    unreal = margin = 0.0
+    for p in db.execute("SELECT * FROM positions WHERE account_id = ?", (a["id"],)):
+        unreal += p["qty"] * (marks.get(p["symbol"], p["avg_price"]) - p["avg_price"])
+        margin += abs(p["qty"]) * p["avg_price"]
+    reserved = db.execute("SELECT COALESCE(SUM(qty * price), 0) FROM orders WHERE account_id = ? AND status = 'open' AND type = 'limit'",
+                          (a["id"],)).fetchone()[0]  # ponytail: reserves every open limit in full, even ones that would only reduce a position
+    equity = a["cash"] + unreal
+    return {"balance": a["cash"], "equity": equity, "unrealized": unreal, "realized": a["cash"] - a["initial"] + fees_paid(db, a["id"]),
+            "margin": margin, "reserved": reserved, "free": equity - margin - reserved}
+
+
+def fees_paid(db, account_id):
+    return -db.execute("SELECT COALESCE(SUM(delta), 0) FROM ledger WHERE account_id = ? AND kind = 'fee'", (account_id,)).fetchone()[0]
+
+
+def position(db, account_id, symbol):
+    return db.execute("SELECT * FROM positions WHERE account_id = ? AND symbol = ?", (account_id, symbol)).fetchone()
+
+
+def place_order(db, owner, account_id, client_order_id, symbol, side, type_, qty, price=None, mark=None, now=0, fill_at=None):
+    """Store an order; returns it as a dict. The same client_order_id again returns the first order untouched.
+    mark = the server's own current price (never the client's). fill_at = fill price for an immediate market fill
+    (paper trading); without it the order stays open until match() fills it on a later bar."""
+    with tx(db):
+        a = account(db, owner, account_id)
+        dup = db.execute("SELECT * FROM orders WHERE account_id = ? AND client_order_id = ?", (a["id"], client_order_id)).fetchone()
+        if dup:
+            return dict(dup)
+        ref = price if type_ == "limit" else mark
+        reason = check_order(side, type_, qty, price, ref)
+        if not reason:
+            pos = position(db, a["id"], symbol)
+            q = pos["qty"] if pos else 0.0
+            added = max(0.0, abs(q + (qty if side == "buy" else -qty)) - abs(q)) * ref  # reducing a position needs no margin
+            if added + abs(qty) * ref * a["fee_bps"] / 1e4 > summary(db, a, {symbol: mark} if mark else {})["free"] + 1e-9:
+                reason = "insufficient funds"
+        oid = db.execute("INSERT INTO orders (account_id, client_order_id, symbol, side, type, qty, price, status, reason, created_at)"
+                         " VALUES (?,?,?,?,?,?,?,?,?,?)", (a["id"], client_order_id, symbol, side, type_, qty, price if type_ == "limit" else None,
+                                                           "rejected" if reason else "open", reason, now)).lastrowid
+        if not reason and fill_at is not None:
+            _fill(db, oid, fill_at, now)
+        return dict(db.execute("SELECT * FROM orders WHERE id = ?", (oid,)).fetchone())
+
+
+def fill(db, order_id, price, now):
+    """Execute an open order at price. A second call for the same order does nothing and returns None."""
+    with tx(db):
+        return _fill(db, order_id, price, now)
+
+
+def _fill(db, order_id, price, now):
+    o = db.execute("SELECT * FROM orders WHERE id = ? AND status = 'open'", (order_id,)).fetchone()
+    if o is None:
+        return None
+    a = db.execute("SELECT * FROM accounts WHERE id = ?", (o["account_id"],)).fetchone()
+    pos = position(db, a["id"], o["symbol"])
+    q, avg = (pos["qty"], pos["avg_price"]) if pos else (0.0, 0.0)
+    new_q, new_avg, realized = apply_fill(q, avg, o["qty"] if o["side"] == "buy" else -o["qty"], price)
+    fee = o["qty"] * price * a["fee_bps"] / 1e4
+    fid = db.execute("INSERT INTO fills (order_id, account_id, symbol, side, qty, price, fee, realized, time) VALUES (?,?,?,?,?,?,?,?,?)",
+                     (o["id"], a["id"], o["symbol"], o["side"], o["qty"], price, fee, realized, now)).lastrowid
+    cash = a["cash"]
+    for kind, delta in (("pnl", realized), ("fee", -fee)):
+        if delta:
+            cash += delta
+            db.execute("INSERT INTO ledger (account_id, kind, delta, balance_after, fill_id, time) VALUES (?,?,?,?,?,?)",
+                       (a["id"], kind, delta, cash, fid, now))
+    db.execute("UPDATE accounts SET cash = ? WHERE id = ?", (cash, a["id"]))
+    if new_q == 0:
+        db.execute("DELETE FROM positions WHERE account_id = ? AND symbol = ?", (a["id"], o["symbol"]))
+    elif pos and (new_q > 0) == (q > 0):  # same direction: SL/TP stay
+        db.execute("UPDATE positions SET qty = ?, avg_price = ? WHERE account_id = ? AND symbol = ?", (new_q, new_avg, a["id"], o["symbol"]))
+    else:  # new or flipped position: old SL/TP no longer make sense
+        db.execute("INSERT OR REPLACE INTO positions (account_id, symbol, qty, avg_price) VALUES (?,?,?,?)", (a["id"], o["symbol"], new_q, new_avg))
+    db.execute("UPDATE orders SET status = 'filled' WHERE id = ?", (o["id"],))
+    return fid
+
+
+def cancel_order(db, owner, account_id, order_id):
+    """True if an open order was cancelled; filled, rejected and already cancelled orders stay as they are."""
+    with tx(db):
+        account(db, owner, account_id)
+        return db.execute("UPDATE orders SET status = 'cancelled' WHERE id = ? AND account_id = ? AND status = 'open'",
+                          (order_id, account_id)).rowcount == 1
+
+
+def set_exits(db, owner, account_id, symbol, mark, sl=None, tp=None):
+    """Attach stop loss / take profit (None removes one) to an open position. Levels are checked against the current
+    price, not the entry, so a stop can trail into profit; a level that would trigger right away is refused."""
+    with tx(db):
+        account(db, owner, account_id)
+        p = position(db, account_id, symbol)
+        if p is None:
+            raise ValueError("no open position")
+        long = p["qty"] > 0
+        if not _num(mark):
+            raise ValueError("no market price")
+        if sl is not None and not (_num(sl) and (sl < mark if long else sl > mark)):
+            raise ValueError("stop loss must be " + ("below" if long else "above") + " the current price")
+        if tp is not None and not (_num(tp) and (tp > mark if long else tp < mark)):
+            raise ValueError("take profit must be " + ("above" if long else "below") + " the current price")
+        db.execute("UPDATE positions SET sl = ?, tp = ? WHERE account_id = ? AND symbol = ?", (sl, tp, account_id, symbol))
