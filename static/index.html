@@ -37,6 +37,8 @@
     <div class="tr-head">
       <select id="tr-acc" class="tb sel" title="Demo account"></select>
       <button id="tr-new" class="tb" title="New demo account">+ Account</button>
+      <button id="tr-report" class="tb" title="Results of this account or session">Report</button>
+      <button id="tr-reset" class="tb" title="Start this account over from its initial capital">Reset</button>
       <span id="tr-stats"></span>
       <span class="spacer"></span>
       <span class="tr-demo">DEMO · virtual money</span>
@@ -51,6 +53,7 @@
       <span class="spacer"></span>
       <input id="rp-seek" type="datetime-local" title="Go to a moment of the session (back in time undoes later trades)"><button id="rp-go" class="tb">Go</button>
       <button id="rp-attach" class="tb" title="Show this session on the active chart">Show on chart</button>
+      <button id="rp-end" class="tb" title="Stop trading this session and see its results">End session</button>
     </div>
     <div id="tr-warn"></div>
     <div class="tr-body">
@@ -122,6 +125,18 @@
       <div id="rp-err" class="err"></div>
     </div>
     <div class="dlg-foot"><span class="hint">Past results do not guarantee future profit.</span><span class="spacer"></span><button id="rp-create" class="btn primary">Start replay</button></div>
+  </dialog>
+
+  <dialog id="rep-dlg" class="dlg wide">
+    <div class="dlg-head"><span class="dlg-title" id="rep-title">Results</span><button class="x" value="close">✕</button></div>
+    <div id="rep-body"></div>
+    <div class="dlg-foot"><span class="hint">Results on past or simulated trading do not guarantee future profit.</span></div>
+  </dialog>
+
+  <dialog id="confirm-dlg" class="dlg narrow">
+    <div class="dlg-head"><span class="dlg-title" id="cf-title"></span><button class="x" value="close">✕</button></div>
+    <div class="form"><div id="cf-text"></div></div>
+    <div class="dlg-foot"><span class="spacer"></span><button class="btn" id="cf-cancel">Cancel</button><button id="cf-ok" class="btn danger"></button></div>
   </dialog>
 
   <dialog id="help-dlg" class="dlg">

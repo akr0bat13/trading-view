@@ -10,6 +10,7 @@ const Trading = (() => {
   const px = v => v == null ? '—' : fmtPrice(v);
   const when = t => t ? new Date(t * 1000).toLocaleString() : '';
   const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 12);
+  const pct = v => v == null ? '—' : (v = round(v * 100), `${v < 0 ? '−' : ''}${Math.abs(v).toFixed(2)}%`);
   const localInput = t => { const d = new Date(t * 1000); return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); }; // for <input type=datetime-local>
   let st = null, tab = 'positions', side = 'buy', pendingId = null, timer, accounts = [], playing = false;
 
@@ -112,9 +113,10 @@ const Trading = (() => {
     saveConfigs();
     toast('Replay paused and left on the server. Reopen it from Trading → the account list, then "Show on chart".');
   }
+  const ended = () => st?.account.status === 'ended';
   function pause() { playing = false; syncReplay(); }
   function play() {
-    if (playing || !st?.replay) return;
+    if (playing || !st?.replay || ended()) return;
     if (!replayPane()) attach(activePane());
     playing = true; syncReplay(); tick();
   }
@@ -150,13 +152,68 @@ const Trading = (() => {
     $('#rp-sym-l').textContent = `${r.symbol} · ${r.tf} bars`;
     const pane = replayPane();
     $('#rp-attach').hidden = !!pane;
+    $('#rp-end').hidden = ended();
+    ['#rp-play', '#rp-step', '#rp-go', '#rp-seek'].forEach(id => $(id).disabled = ended());
     if (pane) pane.el.querySelector('.title .meta').textContent = `${pane.cfg.tf} · REPLAY ${r.speed}× · ${new Date(r.cursor * 1000).toLocaleString()}`;
   }
   // Space plays / pauses while a replay is on screen; ui.js already ignores it inside inputs and dialogs
   function onSpace() {
-    if (!st?.replay || $('#trade').hidden) return false;
+    if (!st?.replay || ended() || $('#trade').hidden) return false;
     playing ? pause() : play();
     return true;
+  }
+
+  // ---------- end, reset, report ----------
+  function ask(title, text, ok) {
+    const d = $('#confirm-dlg');
+    $('#cf-title').textContent = title; $('#cf-text').textContent = text; $('#cf-ok').textContent = ok;
+    d.returnValue = ''; d.showModal();
+    return new Promise(res => { d.onclose = () => res(d.returnValue === 'ok'); });
+  }
+  async function endSession() {
+    pause();
+    if (!await ask('End session?', `"${st.account.name}" stops trading: open orders are cancelled and open positions stay valued at the last price. The report stays available, and Reset starts the session over.`, 'End session')) return;
+    if (await act(`/replays/${st.account.id}/end`, 'POST')) openReport();
+  }
+  async function reset() {
+    const a = st.account;
+    pause();
+    if (!await ask('Reset account?', `"${a.name}" goes back to ${money(a.initial, a.currency)}: its orders, trades, positions and balance history are deleted${st.replay ? ' and the replay returns to its start' : ''}. Other accounts and sessions are not affected. This cannot be undone.`, 'Reset')) return;
+    if (await act(`/accounts/${a.id}/reset`, 'POST', { confirm: true })) replayPane()?.load();
+  }
+  function curve(pts, base) {
+    if (pts.length < 2) return '';
+    const ys = pts.map(p => p[1]).concat(base), lo = Math.min(...ys), hi = Math.max(...ys), x0 = pts[0][0], x1 = pts.at(-1)[0];
+    const X = t => ((t - x0) / (x1 - x0 || 1) * 600).toFixed(1), Y = v => (132 - (v - lo) / (hi - lo || 1) * 124).toFixed(1);
+    return `<svg class="rep-curve" viewBox="0 0 600 140" preserveAspectRatio="none">
+      <line x1="0" x2="600" y1="${Y(base)}" y2="${Y(base)}" stroke="#787b86" stroke-dasharray="4 4" vector-effect="non-scaling-stroke"/>
+      <polyline fill="none" stroke="#2962ff" stroke-width="2" vector-effect="non-scaling-stroke" points="${pts.map(p => X(p[0]) + ',' + Y(p[1])).join(' ')}"/></svg>`;
+  }
+  async function openReport() {
+    let r;
+    try { r = await api(`/accounts/${st.account.id}/report`); } catch (e) { return toast(e.message); }
+    const cur = r.currency, b = r.buy_and_hold, sym = k => esc(k.split(':')[1]);
+    const cell = (k, v, cls = '', sub = '') => `<span><i>${k}</i><b class="${cls}">${v}</b>${sub ? `<small>${sub}</small>` : ''}</span>`;
+    $('#rep-title').textContent = `${st.account.name}${r.status === 'ended' ? ' · ended' : ''}`;
+    $('#rep-body').innerHTML = `<div class="rep-warn">Virtual money, ${st.replay ? 'historical' : 'live'} prices and a simplified fill model (${when(r.start)} – ${when(r.end)}). These results do not guarantee future profit.</div>
+      <div class="rep-grid">${[
+        cell('Initial capital', money(r.initial, cur)), cell('Final equity', money(r.equity, cur)),
+        cell('Return', money(r.pnl), signed(r.pnl), pct(r.return_pct)),
+        cell('Realized PnL', money(r.realized), signed(r.realized), 'before fees'), cell('Unrealized PnL', money(r.unrealized), signed(r.unrealized)),
+        cell('Fees', money(r.fees)), cell('Trades', r.trades, '', r.open_trades ? `+ ${r.open_trades} still open` : 'closed'),
+        cell('Win rate', pct(r.win_rate)), cell('Avg win / avg loss', `${money(r.avg_win)} / ${money(r.avg_loss)}`),
+        cell('Profit factor', r.profit_factor != null ? r.profit_factor.toFixed(2) : r.avg_win != null ? '∞' : '—'),
+        cell('Max drawdown', money(-r.max_drawdown), signed(-r.max_drawdown), pct(-r.max_drawdown_pct)),
+        cell('Time in market', pct(r.time_in_market)),
+        b ? cell('Buy & hold', money(b.pnl), signed(b.pnl), `${pct(b.return_pct)} without fees`) : '',
+      ].join('')}</div>
+      <div class="rep-h">${st.replay ? 'Equity, marked to each bar' : 'Balance after each fill'}</div>${curve(r.curve, r.initial) || '<div class="tr-empty">No trades yet</div>'}
+      <div class="rep-h">Trades (net of fees)</div>${r.trade_list.length ? `<div class="tbl-wrap"><table>
+        <tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Entry</th><th>Exit</th><th>Opened</th><th>Closed</th><th>Fees</th><th>PnL</th></tr>
+        ${r.trade_list.map(t => `<tr><td><b>${sym(t.symbol)}</b></td><td class="${t.side === 'long' ? 'up' : 'down'}">${t.side === 'long' ? 'Long' : 'Short'}</td><td>${+t.qty.toPrecision(8)}</td>
+          <td>${px(t.entry)}</td><td>${px(t.exit)}</td><td>${when(t.opened)}</td><td>${when(t.closed)}</td><td>${money(t.fees)}</td><td class="${signed(t.pnl)}">${money(t.pnl)}</td></tr>`).join('')}
+      </table></div>` : '<div class="tr-empty">No closed trades</div>'}`;
+    $('#rep-dlg').showModal();
   }
 
   // ---------- panel ----------
@@ -181,6 +238,7 @@ const Trading = (() => {
     const a = s.account, m = s.summary, cur = a.currency;
     if (!accounts.some(x => x.id === a.id)) accounts = await api('/accounts').catch(() => [a]);
     $('#tr-acc').innerHTML = accounts.map(x => `<option value="${x.id}" ${x.id === a.id ? 'selected' : ''}>${x.mode === 'replay' ? '⟲ ' : ''}${esc(x.name)} · ${x.currency}</option>`).join('');
+    $('#trade').classList.toggle('ended', ended());
     syncReplay();
     $('#tr-stats').innerHTML = [['Balance', m.balance], ['Equity', m.equity], ['Free', m.free], ['Realized', m.realized, 1], ['Unrealized', m.unrealized, 1], ['Fees', m.fees]]
       .map(([k, v, sg]) => `<span><i>${k}</i><b class="${sg ? signed(v) : ''}">${money(v)}</b></span>`).join('') + `<span><i>Currency</i><b>${esc(cur)}</b></span>`;
@@ -229,7 +287,7 @@ const Trading = (() => {
     document.querySelectorAll('#tr-side .tb').forEach(b => b.classList.toggle('on', b.dataset.s === side));
     $('#tr-submit').textContent = `${side === 'buy' ? 'Buy' : 'Sell'} ${c.symbol}`;
     $('#tr-submit').className = 'btn primary ' + side;
-    $('#tr-note').textContent = st.replay ? 'Market orders fill at the next bar\'s open ± slippage; limits only on later bars.'
+    $('#tr-note').textContent = ended() ? 'This session has ended: see its Report, or Reset to trade again.' : st.replay ? 'Market orders fill at the next bar\'s open ± slippage; limits only on later bars.'
       : 'Market orders fill at the server\'s last price ± slippage; stock quotes can be delayed.';
   }
 
@@ -284,6 +342,11 @@ const Trading = (() => {
     $('#rp-speed').onclick = e => { const b = e.target.closest('[data-v]'); if (b) act(`/replays/${st.account.id}`, 'PUT', { speed: +b.dataset.v }); };
     $('#rp-go').onclick = seek;
     $('#rp-attach').onclick = () => attach(activePane());
+    $('#rp-end').onclick = endSession;
+    $('#tr-report').onclick = openReport;
+    $('#tr-reset').onclick = reset;
+    $('#cf-ok').onclick = () => $('#confirm-dlg').close('ok');
+    $('#cf-cancel').onclick = () => $('#confirm-dlg').close();
     if (S.trade?.open) load();
   }
 

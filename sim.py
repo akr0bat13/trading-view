@@ -145,6 +145,14 @@ def account(db, owner, account_id):
     return a
 
 
+def active(db, owner, account_id):
+    """The account, if it can still trade: an ended replay session is read-only."""
+    a = account(db, owner, account_id)
+    if a["status"] != "active":
+        raise ValueError("this session has ended: reset it to trade again")
+    return a
+
+
 def create_account(db, owner, name, mode, currency, initial, fee_bps=5.0, slippage_bps=2.0, now=0):
     if not _num(initial):
         raise ValueError("initial capital must be a positive number")
@@ -189,7 +197,7 @@ def place_order(db, owner, account_id, client_order_id, symbol, side, type_, qty
     mark = the server's own current price (never the client's). fill_at = fill price for an immediate market fill
     (paper trading); without it the order stays open until match() fills it on a later bar."""
     with tx(db):
-        a = account(db, owner, account_id)
+        a = active(db, owner, account_id)
         dup = db.execute("SELECT * FROM orders WHERE account_id = ? AND client_order_id = ?", (a["id"], client_order_id)).fetchone()
         if dup:
             return dict(dup)
@@ -246,7 +254,7 @@ def _fill(db, order_id, price, now):
 def cancel_order(db, owner, account_id, order_id, now=0):
     """True if an open order was cancelled; filled, rejected and already cancelled orders stay as they are."""
     with tx(db):
-        account(db, owner, account_id)
+        active(db, owner, account_id)
         return db.execute("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE id = ? AND account_id = ? AND status = 'open'",
                           (now, order_id, account_id)).rowcount == 1
 
@@ -255,7 +263,7 @@ def set_exits(db, owner, account_id, symbol, mark, sl=None, tp=None, now=0):
     """Attach stop loss / take profit (None removes one) to an open position. Levels are checked against the current
     price, not the entry, so a stop can trail into profit; a level that would trigger right away is refused."""
     with tx(db):
-        account(db, owner, account_id)
+        active(db, owner, account_id)
         p = position(db, account_id, symbol)
         if p is None:
             raise ValueError("no open position")
@@ -375,7 +383,7 @@ def last_price(db, account_id):
 
 def step(db, owner, account_id, n=1):
     """Advance n bars: each bar that closes is run through on_bar() before it becomes visible. Returns bars stepped."""
-    account(db, owner, account_id)
+    active(db, owner, account_id)
     r = session(db, account_id)
     key, done = f"{r['source']}:{r['symbol']}", 0
     for b in db.execute("SELECT * FROM bars WHERE account_id = ? AND time >= ? ORDER BY time LIMIT ?", (account_id, r["cursor"], n)).fetchall():
@@ -389,7 +397,7 @@ def step(db, owner, account_id, n=1):
 def rewind(db, owner, account_id, t):
     """Go back to time t: the account becomes what it was at t. Orders placed, filled or cancelled at or after t are
     undone and positions and cash are rebuilt from the fills that remain. SL/TP levels are not versioned and are cleared."""
-    a = account(db, owner, account_id)
+    a = active(db, owner, account_id)
     r = session(db, account_id)
     t = max(r["start"], min(t, r["cursor"]))
     t -= (t - r["start"]) % TF_SECONDS[r["tf"]]  # land on a bar boundary
@@ -408,3 +416,104 @@ def rewind(db, owner, account_id, t):
         cash = db.execute("SELECT SUM(delta) FROM ledger WHERE account_id = ?", (account_id,)).fetchone()[0]
         db.execute("UPDATE accounts SET cash = ? WHERE id = ?", (cash if cash is not None else a["initial"], account_id))
         db.execute("UPDATE replay SET cursor = ? WHERE account_id = ?", (t, account_id))
+
+
+# ---------- end, reset, report ----------
+
+def end_session(db, owner, account_id, now):
+    """Freeze the account: open orders are cancelled, positions stay valued at the last price, nothing trades any more."""
+    with tx(db):
+        active(db, owner, account_id)
+        db.execute("UPDATE orders SET status = 'cancelled', reason = 'session ended', closed_at = ? WHERE account_id = ? AND status = 'open'",
+                   (now, account_id))
+        db.execute("UPDATE accounts SET status = 'ended' WHERE id = ?", (account_id,))
+
+
+def reset(db, owner, account_id, now):
+    """Back to the initial capital: this account's orders, fills, positions and ledger are deleted, a replay returns to
+    its start. Other accounts are untouched. now: the new deposit's time (a replay passes its start)."""
+    with tx(db):
+        a = account(db, owner, account_id)
+        for table in ("ledger", "fills", "orders", "positions"):
+            db.execute(f"DELETE FROM {table} WHERE account_id = ?", (account_id,))
+        db.execute("UPDATE accounts SET cash = initial, status = 'active', checked_at = ? WHERE id = ?", (now, account_id))
+        db.execute("INSERT INTO ledger (account_id, kind, delta, balance_after, time) VALUES (?, 'deposit', ?, ?, ?)", (account_id, a["initial"], a["initial"], now))
+        db.execute("UPDATE replay SET cursor = start WHERE account_id = ?", (account_id,))
+
+
+def round_trips(fills):
+    """Fills -> trades: a trade opens when a position leaves zero and closes when it returns to zero or flips.
+    pnl is net of every fee paid inside it. Returns (closed trades, still open trades by symbol)."""
+    done, live = [], {}
+    for f in fills:
+        t = live.get(f["symbol"]) or {"symbol": f["symbol"], "side": "long" if f["side"] == "buy" else "short", "opened": f["time"],
+                                      "qty": 0.0, "avg": 0.0, "size": 0.0, "pnl": 0.0, "fees": 0.0}
+        live[f["symbol"]] = t
+        q, avg, realized = apply_fill(t["qty"], t["avg"], f["qty"] if f["side"] == "buy" else -f["qty"], f["price"])
+        t["pnl"] += realized - f["fee"]
+        t["fees"] += f["fee"]
+        if q == 0 or (t["qty"] and (q > 0) != (t["qty"] > 0)):  # flat, or flipped through zero: the fill's fee stays with the closed trade
+            done.append({"symbol": t["symbol"], "side": t["side"], "qty": t["size"], "entry": t["avg"], "exit": f["price"],
+                         "opened": t["opened"], "closed": f["time"], "pnl": t["pnl"], "fees": t["fees"]})
+            del live[f["symbol"]]
+            if q:
+                live[f["symbol"]] = {"symbol": f["symbol"], "side": "long" if q > 0 else "short", "opened": f["time"],
+                                     "qty": q, "avg": avg, "size": abs(q), "pnl": 0.0, "fees": 0.0}
+        else:
+            t["qty"], t["avg"], t["size"] = q, avg, max(t["size"], abs(q))
+    return done, live
+
+
+def drawdown(curve):
+    """Largest peak-to-trough fall of an equity curve [(time, equity)] -> (amount, fraction of the peak)."""
+    peak, worst = -math.inf, (0.0, 0.0)
+    for _, e in curve:
+        peak = max(peak, e)
+        if peak - e > worst[0]:
+            worst = (peak - e, (peak - e) / peak if peak > 0 else 0.0)
+    return worst
+
+
+def report(db, a, marks, now):
+    """Session results. Replay: equity is marked to every known bar's close, plus a buy-and-hold benchmark.
+    Paper: the curve is the balance after each fill (realized only) ending at today's equity."""
+    aid, s = a["id"], summary(db, a, marks)
+    fills = [dict(f) for f in db.execute("SELECT * FROM fills WHERE account_id = ? ORDER BY time, id", (aid,))]
+    trades, live = round_trips(fills)
+    r = a["mode"] == "replay" and session(db, aid)
+    benchmark = None
+    if r:
+        tf = TF_SECONDS[r["tf"]]
+        bars = db.execute("SELECT * FROM bars WHERE account_id = ? AND time >= ? AND time + ? <= ? ORDER BY time",
+                          (aid, r["start"], tf, r["cursor"])).fetchall()
+        curve, cash, q, avg, i, held = [(r["start"], a["initial"])], a["initial"], 0.0, 0.0, 0, 0
+        for b in bars:
+            while i < len(fills) and fills[i]["time"] <= b["time"]:  # fills are stamped with the open of their bar
+                f = fills[i]
+                q, avg, realized = apply_fill(q, avg, f["qty"] if f["side"] == "buy" else -f["qty"], f["price"])
+                cash += realized - f["fee"]
+                i += 1
+            held += q != 0
+            curve.append((b["time"] + tf, cash + q * (b["close"] - avg)))
+        in_market = held / len(bars) if bars else 0.0
+        start, end = r["start"], r["cursor"]
+        if bars:
+            benchmark = {"return_pct": bars[-1]["close"] / bars[0]["open"] - 1, "pnl": a["initial"] * (bars[-1]["close"] / bars[0]["open"] - 1)}
+    else:
+        curve = [(a["created_at"], a["initial"])] + [(row["time"], row["balance_after"]) for row in
+                 db.execute("SELECT time, balance_after FROM ledger WHERE account_id = ? AND kind != 'deposit' ORDER BY id", (aid,))]
+        curve.append((now, s["equity"]))
+        start, end = a["created_at"], now
+        busy = sum(t["closed"] - t["opened"] for t in trades) + sum(now - t["opened"] for t in live.values())
+        in_market = min(1.0, busy / (end - start)) if end > start else 0.0  # ponytail: overlapping trades in several symbols count twice, capped at 100%
+    wins, losses = [t["pnl"] for t in trades if t["pnl"] > 0], [t["pnl"] for t in trades if t["pnl"] < 0]
+    dd, dd_pct = drawdown(curve)
+    step = max(1, len(curve) // 400)
+    return {"start": start, "end": end, "status": a["status"], "currency": a["currency"],
+            "initial": a["initial"], "equity": s["equity"], "pnl": s["equity"] - a["initial"], "return_pct": s["equity"] / a["initial"] - 1,
+            "realized": s["realized"], "unrealized": s["unrealized"], "fees": fees_paid(db, aid),
+            "trades": len(trades), "open_trades": len(live), "win_rate": len(wins) / len(trades) if trades else None,
+            "avg_win": sum(wins) / len(wins) if wins else None, "avg_loss": sum(losses) / len(losses) if losses else None,
+            "profit_factor": sum(wins) / -sum(losses) if losses else None,  # None with no losing trade (infinite or undefined)
+            "max_drawdown": dd, "max_drawdown_pct": dd_pct, "time_in_market": in_market, "buy_and_hold": benchmark,
+            "curve": curve[::step] + ([curve[-1]] if (len(curve) - 1) % step else []), "trade_list": trades[::-1][:500]}

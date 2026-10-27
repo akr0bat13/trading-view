@@ -204,5 +204,72 @@ class ReplayTest(unittest.TestCase):
             sim.create_replay(self.db, "me", "R", "crypto", "BTC", "15m", "USD", 1000, self.bars[:10], self.start)
 
 
+class ReportTest(unittest.TestCase):
+    """Same rising bars as ReplayTest, 10 bps fees: a winning long, then a losing short."""
+
+    def setUp(self):
+        self.db = sim.connect(":memory:")
+        self.bars = [bar(i * 900, 100 + i, 100.5 + i, 99.5 + i, 100.5 + i) for i in range(40)]
+        self.start = 10 * 900
+        self.aid = sim.create_replay(self.db, "me", "R", "crypto", "BTC", "15m", "USD", 10_000, self.bars, self.start, fee_bps=10, slippage_bps=0)
+        self.other = sim.create_account(self.db, "me", "Paper", "paper", "USD", 500)
+
+    def trade(self, cid, side, qty, then):
+        cursor = sim.session(self.db, self.aid)["cursor"]
+        sim.place_order(self.db, "me", self.aid, cid, "crypto:BTC", side, "market", qty, mark=sim.last_price(self.db, self.aid), now=cursor)
+        sim.step(self.db, "me", self.aid, then)
+
+    def report(self):
+        a = sim.account(self.db, "me", self.aid)
+        return sim.report(self.db, a, {"crypto:BTC": sim.last_price(self.db, self.aid)}, now=0)
+
+    def test_metrics_of_a_replay_session(self):
+        self.trade("a", "buy", 10, 2)   # fills at 110 (bar 10), fee 1.10
+        self.trade("b", "sell", 10, 2)  # 112, +20, fee 1.12 -> +17.78
+        self.trade("c", "sell", 5, 2)   # short at 114, fee 0.57
+        self.trade("d", "buy", 5, 3)    # 116, -10, fee 0.58 -> -11.15
+        r = self.report()
+        self.assertEqual((r["trades"], r["open_trades"], r["win_rate"]), (2, 0, 0.5))
+        self.assertAlmostEqual(r["avg_win"], 17.78)
+        self.assertAlmostEqual(r["avg_loss"], -11.15)
+        self.assertAlmostEqual(r["profit_factor"], 17.78 / 11.15)
+        self.assertAlmostEqual(r["fees"], 3.37)
+        self.assertAlmostEqual(r["pnl"], 17.78 - 11.15)
+        self.assertAlmostEqual(sum(t["pnl"] for t in r["trade_list"]), r["pnl"])  # trades net of fees add up to the account
+        self.assertAlmostEqual(r["max_drawdown"], 11.15)  # peak after the long, trough after the short
+        self.assertAlmostEqual(r["time_in_market"], 4 / 9)
+        self.assertAlmostEqual(r["buy_and_hold"]["return_pct"], 118.5 / 110 - 1)
+        self.assertEqual([(t["side"], t["entry"], t["exit"]) for t in r["trade_list"]], [("short", 114, 116), ("long", 110, 112)])
+
+    def test_empty_session_has_no_ratios(self):
+        r = self.report()
+        self.assertEqual((r["trades"], r["win_rate"], r["profit_factor"], r["max_drawdown"], r["pnl"]), (0, None, None, 0, 0))
+
+    def test_end_freezes_and_reset_starts_over_without_touching_other_accounts(self):
+        self.trade("a", "buy", 10, 2)
+        sim.place_order(self.db, "me", self.aid, "lim", "crypto:BTC", "sell", "limit", 10, price=200, now=sim.session(self.db, self.aid)["cursor"])
+        sim.end_session(self.db, "me", self.aid, sim.session(self.db, self.aid)["cursor"])
+        a = sim.account(self.db, "me", self.aid)
+        self.assertEqual(a["status"], "ended")
+        self.assertEqual(sim.snapshot(self.db, a, {})["orders"], [])  # the open limit was cancelled
+        for act in (lambda: sim.step(self.db, "me", self.aid, 1), lambda: sim.rewind(self.db, "me", self.aid, self.start),
+                    lambda: sim.place_order(self.db, "me", self.aid, "x", "crypto:BTC", "buy", "market", 1, mark=110),
+                    lambda: sim.end_session(self.db, "me", self.aid, 0)):
+            with self.assertRaises(ValueError):
+                act()
+        self.assertEqual(self.report()["trades"], 0)
+        self.assertEqual(self.report()["open_trades"], 1)
+        with self.assertRaises(KeyError):
+            sim.reset(self.db, "someone else", self.aid, self.start)
+        sim.reset(self.db, "me", self.aid, self.start)
+        a = sim.account(self.db, "me", self.aid)
+        s = sim.snapshot(self.db, a, {})
+        self.assertEqual((a["status"], a["cash"], sim.session(self.db, self.aid)["cursor"]), ("active", 10_000, self.start))
+        self.assertEqual((s["positions"], s["orders"], s["history"], len(s["ledger"])), ([], [], [], 1))
+        self.assertEqual(sim.account(self.db, "me", self.other)["cash"], 500)
+        self.trade("again", "buy", 1, 1)  # trades again
+        self.assertEqual(self.report()["open_trades"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

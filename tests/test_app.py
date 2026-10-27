@@ -159,6 +159,17 @@ class TradingApiTest(unittest.TestCase):
         self.assertEqual(self.c.put(f"/api/trading/replays/{rid}", json={"speed": 5}).get_json()["replay"]["speed"], 5)
         self.assertEqual(self.c.get(f"/api/trading/replays/{rid}/bars?tf=15m").status_code, 400)
         self.assertEqual(self.c.get(f"/api/trading/replays/{self.aid}/bars?tf=1h").status_code, 404)  # a paper account has no session
+        self.c.post(f"/api/trading/replays/{rid}/step", json={"n": 3, "tf": "1h"})
+        rep = self.c.get(f"/api/trading/accounts/{rid}/report").get_json()
+        self.assertEqual((rep["trades"], rep["end"], len(rep["curve"])), (0, start + 3 * 3600, 4))
+        self.assertAlmostEqual(rep["buy_and_hold"]["return_pct"], 122.5 / 120 - 1)
+        s = self.c.post(f"/api/trading/replays/{rid}/end").get_json()
+        self.assertEqual(s["account"]["status"], "ended")
+        self.assertEqual(self.c.post(f"/api/trading/replays/{rid}/step", json={"n": 1, "tf": "1h"}).status_code, 400)
+        self.assertEqual(self.c.post(f"/api/trading/accounts/{rid}/reset", json={}).status_code, 400)  # needs the explicit confirmation
+        s = self.c.post(f"/api/trading/accounts/{rid}/reset", json={"confirm": True}).get_json()
+        self.assertEqual((s["account"]["status"], s["summary"]["balance"], s["positions"], s["replay"]["cursor"]), ("active", 1000, [], start))
+        self.assertEqual(self.state()["account"]["status"], "active")  # the paper account is untouched
         with mock.patch.object(self.m.data_source, "history", return_value=hist[25:]):
             r = self.c.post("/api/trading/replays", json={"source": "crypto", "symbol": "BTC", "tf": "1h", "start": start, "initial": 1000})
         self.assertIn("only available from", r.get_json()["error"])

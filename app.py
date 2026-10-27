@@ -189,13 +189,19 @@ def clock(a, key):
     return int(time.time()), fresh_mark(key), True
 
 
-def trading_state(account_id, **extra):
-    a = sim.account(DB, owner(), account_id)
+def marks_of(a):
+    """({symbol: current price}, {symbol: data error}): the replay's last closed bar, or live prices after a paper sync."""
     if a["mode"] == "replay":
         r = replay_of(a)
-        marks, errors, extra["replay"] = {f"{r['source']}:{r['symbol']}": sim.last_price(DB, a["id"])}, {}, dict(r)
-    else:
-        marks, errors = sync(a)
+        return {f"{r['source']}:{r['symbol']}": sim.last_price(DB, a["id"])}, {}
+    return sync(a)
+
+
+def trading_state(account_id, **extra):
+    a = sim.account(DB, owner(), account_id)
+    marks, errors = marks_of(a)
+    if a["mode"] == "replay":
+        extra["replay"] = dict(replay_of(a))
     return jsonify(**sim.snapshot(DB, sim.account(DB, owner(), account_id), marks), errors=errors, **extra)
 
 
@@ -291,6 +297,23 @@ def trading_exits(aid):
     return trading_state(aid)
 
 
+@trading.get("/accounts/<int:aid>/report")
+def trading_report(aid):
+    a = sim.account(DB, owner(), aid)
+    marks, errors = marks_of(a)
+    return jsonify(**sim.report(DB, sim.account(DB, owner(), aid), marks, int(time.time())), errors=errors)
+
+
+@trading.post("/accounts/<int:aid>/reset")
+def trading_reset(aid):
+    """Body: {confirm: true}. Wipes this account's trading back to its initial capital; other accounts stay."""
+    a = sim.account(DB, owner(), aid)
+    if (request.get_json(silent=True) or {}).get("confirm") is not True:
+        raise ValueError("resetting deletes this account's orders, trades and balance history: confirm it")
+    sim.reset(DB, owner(), aid, replay_of(a)["start"] if a["mode"] == "replay" else int(time.time()))
+    return trading_state(aid)
+
+
 # ---------- replay: the server owns the simulated time; bars after the cursor never leave it ----------
 REPLAY_BARS = 20000  # bars after the start downloaded per session (a year of 30m, ~2 weeks of 1m)
 
@@ -351,6 +374,13 @@ def replay_seek(aid):
         n = DB.execute("SELECT COUNT(*) FROM bars WHERE account_id = ? AND time >= ? AND time + ? <= ?",
                        (aid, r["cursor"], sim.TF_SECONDS[r["tf"]], t)).fetchone()[0]
         sim.step(DB, owner(), aid, n)
+    return trading_state(aid)
+
+
+@trading.post("/replays/<int:aid>/end")
+def replay_end(aid):
+    """End the session: open orders are cancelled and the account becomes read-only; the report stays available."""
+    sim.end_session(DB, owner(), aid, replay_of(sim.account(DB, owner(), aid))["cursor"])
     return trading_state(aid)
 
 
