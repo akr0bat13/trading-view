@@ -16,7 +16,8 @@ CREATE TABLE IF NOT EXISTS accounts (
   id INTEGER PRIMARY KEY, owner TEXT NOT NULL, name TEXT NOT NULL,
   mode TEXT NOT NULL CHECK (mode IN ('paper', 'replay')), currency TEXT NOT NULL,
   initial REAL NOT NULL, cash REAL NOT NULL, fee_bps REAL NOT NULL, slippage_bps REAL NOT NULL,
-  status TEXT NOT NULL DEFAULT 'active', created_at INTEGER NOT NULL);
+  status TEXT NOT NULL DEFAULT 'active', created_at INTEGER NOT NULL,
+  checked_at INTEGER NOT NULL DEFAULT 0);  -- paper: market bars up to here have been run through on_bar()
 CREATE TABLE IF NOT EXISTS replay (  -- one replay session per replay account
   account_id INTEGER PRIMARY KEY REFERENCES accounts ON DELETE CASCADE,
   source TEXT NOT NULL, symbol TEXT NOT NULL, tf TEXT NOT NULL,
@@ -38,7 +39,9 @@ CREATE TABLE IF NOT EXISTS fills (
   qty REAL NOT NULL, price REAL NOT NULL, fee REAL NOT NULL, realized REAL NOT NULL, time INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS positions (  -- qty < 0 is a short
   account_id INTEGER NOT NULL REFERENCES accounts ON DELETE CASCADE, symbol TEXT NOT NULL,
-  qty REAL NOT NULL, avg_price REAL NOT NULL, sl REAL, tp REAL, PRIMARY KEY (account_id, symbol));
+  qty REAL NOT NULL, avg_price REAL NOT NULL, sl REAL, tp REAL,
+  since INTEGER NOT NULL DEFAULT 0,  -- SL/TP only look at bars from here on (position opened or exits changed)
+  PRIMARY KEY (account_id, symbol));
 CREATE TABLE IF NOT EXISTS ledger (
   id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL REFERENCES accounts ON DELETE CASCADE,
   kind TEXT NOT NULL CHECK (kind IN ('deposit', 'fee', 'pnl')), delta REAL NOT NULL, balance_after REAL NOT NULL,
@@ -150,8 +153,8 @@ def create_account(db, owner, name, mode, currency, initial, fee_bps=5.0, slippa
     if not (isinstance(name, str) and name.strip()):
         raise ValueError("name is required")
     with tx(db):
-        aid = db.execute("INSERT INTO accounts (owner, name, mode, currency, initial, cash, fee_bps, slippage_bps, created_at)"
-                         " VALUES (?,?,?,?,?,?,?,?,?)", (owner, name.strip(), mode, currency, initial, initial, fee_bps, slippage_bps, now)).lastrowid
+        aid = db.execute("INSERT INTO accounts (owner, name, mode, currency, initial, cash, fee_bps, slippage_bps, created_at, checked_at)"
+                         " VALUES (?,?,?,?,?,?,?,?,?,?)", (owner, name.strip(), mode, currency, initial, initial, fee_bps, slippage_bps, now, now)).lastrowid
         db.execute("INSERT INTO ledger (account_id, kind, delta, balance_after, time) VALUES (?, 'deposit', ?, ?, ?)", (aid, initial, initial, now))
     return aid
 
@@ -231,7 +234,7 @@ def _fill(db, order_id, price, now):
     elif pos and (new_q > 0) == (q > 0):  # same direction: SL/TP stay
         db.execute("UPDATE positions SET qty = ?, avg_price = ? WHERE account_id = ? AND symbol = ?", (new_q, new_avg, a["id"], o["symbol"]))
     else:  # new or flipped position: old SL/TP no longer make sense
-        db.execute("INSERT OR REPLACE INTO positions (account_id, symbol, qty, avg_price) VALUES (?,?,?,?)", (a["id"], o["symbol"], new_q, new_avg))
+        db.execute("INSERT OR REPLACE INTO positions (account_id, symbol, qty, avg_price, since) VALUES (?,?,?,?,?)", (a["id"], o["symbol"], new_q, new_avg, now))
     db.execute("UPDATE orders SET status = 'filled' WHERE id = ?", (o["id"],))
     return fid
 
@@ -244,7 +247,7 @@ def cancel_order(db, owner, account_id, order_id):
                           (order_id, account_id)).rowcount == 1
 
 
-def set_exits(db, owner, account_id, symbol, mark, sl=None, tp=None):
+def set_exits(db, owner, account_id, symbol, mark, sl=None, tp=None, now=0):
     """Attach stop loss / take profit (None removes one) to an open position. Levels are checked against the current
     price, not the entry, so a stop can trail into profit; a level that would trigger right away is refused."""
     with tx(db):
@@ -259,4 +262,42 @@ def set_exits(db, owner, account_id, symbol, mark, sl=None, tp=None):
             raise ValueError("stop loss must be " + ("below" if long else "above") + " the current price")
         if tp is not None and not (_num(tp) and (tp > mark if long else tp < mark)):
             raise ValueError("take profit must be " + ("above" if long else "below") + " the current price")
-        db.execute("UPDATE positions SET sl = ?, tp = ? WHERE account_id = ? AND symbol = ?", (sl, tp, account_id, symbol))
+        db.execute("UPDATE positions SET sl = ?, tp = ?, since = ? WHERE account_id = ? AND symbol = ?", (sl, tp, now, account_id, symbol))
+
+
+def on_bar(db, account_id, symbol, bar):
+    """Run one closed bar of `symbol` through the account: open orders first, then the position's SL/TP.
+    Fills are stamped with the bar's open time (when inside the bar it happened is unknown). Safe to repeat for a bar."""
+    with tx(db):
+        slip = db.execute("SELECT slippage_bps FROM accounts WHERE id = ?", (account_id,)).fetchone()[0]
+        for o in db.execute("SELECT * FROM orders WHERE account_id = ? AND symbol = ? AND status = 'open' ORDER BY id", (account_id, symbol)).fetchall():
+            price = match(o, bar, slip)
+            if price is not None:
+                _fill(db, o["id"], price, bar["time"])
+        p = position(db, account_id, symbol)
+        hit = p and bar["time"] >= p["since"] and exit_hit(p["qty"], p["sl"], p["tp"], bar, slip)
+        if hit:
+            price, kind = hit
+            oid = db.execute("INSERT INTO orders (account_id, client_order_id, symbol, side, type, qty, status, reason, created_at)"
+                             " VALUES (?,?,?,?,'market',?,'open',?,?)", (account_id, f"{kind}:{symbol}:{bar['time']}", symbol,
+                                                                         "sell" if p["qty"] > 0 else "buy", abs(p["qty"]),
+                                                                         "stop loss" if kind == "sl" else "take profit", bar["time"])).lastrowid
+            _fill(db, oid, price, bar["time"])
+
+
+def accounts(db, owner):
+    return [dict(a) for a in db.execute("SELECT * FROM accounts WHERE owner = ? ORDER BY id", (owner,))]
+
+
+def snapshot(db, a, marks):
+    """Everything the trading panel shows for one account."""
+    rows = lambda sql: [dict(r) for r in db.execute(sql, (a["id"],))]  # noqa: E731
+    positions = rows("SELECT * FROM positions WHERE account_id = ? ORDER BY symbol")
+    for p in positions:
+        p["mark"] = marks.get(p["symbol"])
+        p["unrealized"] = p["qty"] * (p["mark"] - p["avg_price"]) if p["mark"] else None
+    return {"account": dict(a), "summary": {**summary(db, a, marks), "fees": fees_paid(db, a["id"])}, "positions": positions,
+            "orders": rows("SELECT * FROM orders WHERE account_id = ? AND status = 'open' ORDER BY id DESC"),
+            "history": rows("SELECT o.*, f.price AS fill_price, f.fee, f.realized, f.time AS fill_time FROM orders o"
+                            " LEFT JOIN fills f ON f.order_id = o.id WHERE o.account_id = ? AND o.status != 'open' ORDER BY o.id DESC LIMIT 200"),
+            "ledger": rows("SELECT * FROM ledger WHERE account_id = ? ORDER BY id DESC LIMIT 200")}

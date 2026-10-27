@@ -107,6 +107,7 @@ const UI = (() => {
     $('#sync-cursor')?.classList.toggle('on', !!S.syncCursor);
     $('#sync-symbol')?.classList.toggle('on', !!S.syncSymbol);
     syncDrawToolbar();
+    Trading.syncSymbol();
   }
 
   const groupTool = i => GROUPS[i][1].find(t => t[0] === S.lastTool?.[i]) || GROUPS[i][1][0];

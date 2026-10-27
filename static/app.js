@@ -563,6 +563,7 @@ async function init() {
   updateMarketBadges(); setInterval(updateMarketBadges, 30000);
   BOT.refresh(); setInterval(() => BOT.refresh(), 60000);
   UI.init();
+  Trading.init();
   setCount(COUNTS.includes(S.count) ? S.count : 4);
   (function watchViews() {
     panes.forEach(p => { if (p.viewKey() !== p.lastView) p.scheduleDraw(); });
