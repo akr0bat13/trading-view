@@ -21,6 +21,7 @@
     <button id="sync-symbol" class="tb icon" title="Sync symbol between charts"></button>
     <span class="spacer"></span>
     <span id="badges"></span>
+    <button id="trade-btn" class="tb" title="Demo trading with virtual money"></button>
     <button id="lay-btn" class="tb icon" title="Layouts: save and restore sets of charts"></button>
     <button id="shot-btn" class="tb icon" title="Save chart as PNG (Alt+S)"></button>
     <button id="help-btn" class="tb icon" title="Keyboard shortcuts (?)"></button>
@@ -32,6 +33,30 @@
     <main id="grid"></main>
     <aside id="watchlist"></aside>
   </div>
+  <section id="trade" hidden>
+    <div class="tr-head">
+      <select id="tr-acc" class="tb sel" title="Demo account"></select>
+      <button id="tr-new" class="tb" title="New demo account">+ Account</button>
+      <span id="tr-stats"></span>
+      <span class="spacer"></span>
+      <span class="tr-demo">DEMO · virtual money</span>
+      <button id="tr-close" class="tb icon" title="Hide the trading panel">✕</button>
+    </div>
+    <div id="tr-warn"></div>
+    <div class="tr-body">
+      <form id="tr-form" autocomplete="off">
+        <div class="tr-sym"><b id="tr-sym"></b><span id="tr-src"></span></div>
+        <div id="tr-side" class="seg"><button type="button" class="tb" data-s="buy">Buy / Long</button><button type="button" class="tb" data-s="sell">Sell / Short</button></div>
+        <label class="field"><span>Type</span><select id="tr-type"><option value="market">Market</option><option value="limit">Limit</option></select></label>
+        <label class="field"><span>Quantity</span><input id="tr-qty" type="number" step="any" min="0" value="1" required></label>
+        <label class="field" id="tr-price-f"><span>Limit price</span><input id="tr-price" type="number" step="any" min="0"></label>
+        <button id="tr-submit" class="btn primary"></button>
+        <div class="tr-note">Market orders fill at the server's last price ± slippage; stock quotes can be delayed.</div>
+      </form>
+      <div class="tr-tables"><div id="tr-tabs" class="tabs"></div><div id="tr-table"></div></div>
+    </div>
+  </section>
+  <div id="trade-menu" class="menu" hidden></div>
 
   <div id="toasts"></div>
 
@@ -60,6 +85,19 @@
     <div id="lay-list" class="list"></div>
   </dialog>
 
+  <dialog id="acct-dlg" class="dlg narrow">
+    <div class="dlg-head"><span class="dlg-title">New demo account</span><button class="x" value="close">✕</button></div>
+    <div class="form">
+      <label class="field"><span>Name</span><input id="acct-name" value="Demo" maxlength="40"></label>
+      <label class="field"><span>Currency</span><select id="acct-cur" class="tb sel"><option value="USD">USD · crypto, US stocks</option><option value="RUB">RUB · MOEX</option></select></label>
+      <label class="field"><span>Starting capital</span><input id="acct-initial" type="number" min="1" step="any" value="10000"></label>
+      <label class="field"><span>Fee, bps of trade value</span><input id="acct-fee" type="number" min="0" max="1000" step="any" value="5"></label>
+      <label class="field"><span>Slippage, bps</span><input id="acct-slip" type="number" min="0" max="1000" step="any" value="2"></label>
+      <div id="acct-err" class="err"></div>
+    </div>
+    <div class="dlg-foot"><span class="hint">Virtual money only. No real orders are ever sent.</span><span class="spacer"></span><button id="acct-create" class="btn primary">Create</button></div>
+  </dialog>
+
   <dialog id="help-dlg" class="dlg">
     <div class="dlg-head"><span class="dlg-title">Keyboard shortcuts</span><button class="x" value="close">✕</button></div>
     <div id="help-list" class="list"></div>
@@ -71,6 +109,7 @@
   <script src="botmarkers.js"></script>
   <script src="drawings.js"></script>
   <script src="app.js"></script>
+  <script src="trading.js"></script>
   <script src="ui.js"></script>
 </body>
 </html>
