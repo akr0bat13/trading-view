@@ -12,4 +12,5 @@ jobs:
       - run: pip install -r requirements.txt
       - run: node tests/indicators.test.js
       - run: node tests/botmarkers.test.js
+      - run: node tests/trademarkers.test.js
       - run: python -m unittest discover -s tests -p 'test_*.py'

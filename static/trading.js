@@ -165,7 +165,9 @@ const Trading = (() => {
     try { show(await api('/accounts/' + S.trade.acc)); }
     catch (e) { toast(e.message); if (/not found/.test(e.message)) close(); }
   }
-  function close() { pause(); S.trade = { ...S.trade, open: false }; saveConfigs(); $('#trade').hidden = true; clearInterval(timer); }
+  function close() { pause(); S.trade = { ...S.trade, open: false }; saveConfigs(); $('#trade').hidden = true; clearInterval(timer); panes.forEach(p => p.applyTrade()); }
+  // the state a chart should draw: the open account, on live charts for paper and on its own chart for replay
+  const shownOn = pane => st && !$('#trade').hidden && (st.replay ? pane.cfg.replay === st.account.id : !pane.cfg.replay) ? st : null;
 
   async function show(s) {
     if (st && st.account.id !== s.account.id) pause();
@@ -186,6 +188,7 @@ const Trading = (() => {
     $('#tr-warn').textContent = errs.length ? `No market data for ${errs.map(e => e[0]).join(', ')}: nothing filled for it until data returns.` : '';
     syncSymbol();
     renderTable();
+    panes.forEach(p => p.applyTrade());
   }
 
   function renderTable() {
@@ -284,5 +287,5 @@ const Trading = (() => {
     if (S.trade?.open) load();
   }
 
-  return { init, syncSymbol, detach, onSpace };
+  return { init, syncSymbol, detach, onSpace, shownOn };
 })();

@@ -173,12 +173,23 @@ class Pane {
     this.applyFormat();
     this.candles.setData(this.seriesData());
     this.botMarkers = LC.createSeriesMarkers(this.candles, []);
+    this.tradeMarkers = LC.createSeriesMarkers(this.candles, []);
+    this.tradeLines = [];
     this.applyBotMarkers();
   }
   // entries and exits of the paper bot, on the BTC chart only (the bot trades BTCUSDT)
   applyBotMarkers() {
     const btc = this.cfg.source === 'crypto' && this.cfg.symbol === 'BTC';
     this.botMarkers?.setMarkers(btc ? BotMarkers.build(BOT.trades, this.bars) : []);
+    this.applyTrade();
+  }
+  // the open demo account's fills, position, SL/TP and limit orders for this chart's symbol (empty when it doesn't apply)
+  applyTrade() {
+    if (!this.tradeMarkers) return;
+    const st = Trading.shownOn(this), t = st ? TradeMarkers.build(st, this.bars, this.drawKey()) : { markers: [], lines: [] };
+    this.tradeMarkers.setMarkers(t.markers);
+    this.tradeLines.forEach(l => this.candles.removePriceLine(l));
+    this.tradeLines = t.lines.map(o => this.candles.createPriceLine({ lineWidth: 1, axisLabelVisible: true, ...o }));
   }
   // PNG of the chart: library screenshot (candles, indicators) + our overlay (drawings, profile, FVG) + a caption
   screenshot() {
