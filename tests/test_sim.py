@@ -134,5 +134,75 @@ class StorageTest(unittest.TestCase):
                 sim.create_account(self.db, "me", args["name"], "paper", "USD", args["initial"], fee_bps=kw.get("fee_bps", 5))
 
 
+class ReplayTest(unittest.TestCase):
+    """15m session starting at bar 10 of 40; prices rise 1 per bar from 100."""
+
+    def setUp(self):
+        self.db = sim.connect(":memory:")
+        self.bars = [bar(i * 900, 100 + i, 100.5 + i, 99.5 + i, 100.5 + i) for i in range(40)]
+        self.start = 10 * 900
+        self.aid = sim.create_replay(self.db, "me", "R", "crypto", "BTC", "15m", "USD", 10_000, self.bars, self.start, fee_bps=0, slippage_bps=0)
+
+    def state(self):
+        a = sim.account(self.db, "me", self.aid)
+        return sim.snapshot(self.db, a, {"crypto:BTC": sim.last_price(self.db, self.aid)})
+
+    def test_no_bar_from_the_future_is_ever_served(self):
+        for n in (0, 1, 5):
+            sim.step(self.db, "me", self.aid, n) if n else None
+            cursor = sim.session(self.db, self.aid)["cursor"]
+            for tf in ("15m", "30m", "1h", "1d"):
+                bars = sim.known_bars(self.db, self.aid, tf)
+                self.assertTrue(bars)
+                self.assertLessEqual(bars[-1]["time"], cursor - 900, tf)  # the newest bucket starts at or before the last closed bar
+            last = sim.known_bars(self.db, self.aid, "15m")[-1]
+            self.assertEqual(last["time"] + 900, cursor)
+            self.assertEqual(sim.last_price(self.db, self.aid), last["close"])
+        hourly = sim.known_bars(self.db, self.aid, "1h")[-1]  # a forming hour is built only from closed 15m bars
+        closed = [b for b in self.bars if b["time"] + 900 <= sim.session(self.db, self.aid)["cursor"] and b["time"] >= hourly["time"]]
+        self.assertEqual((hourly["close"], hourly["high"]), (closed[-1]["close"], max(b["high"] for b in closed)))
+        with self.assertRaises(ValueError):
+            sim.known_bars(self.db, self.aid, "5m")  # finer than the session's bars
+        self.assertTrue(all(b["time"] < 900 * 5 for b in sim.known_bars(self.db, self.aid, "15m", before=900 * 5)))
+
+    def test_market_order_fills_at_the_next_open_and_steps_run_exits(self):
+        cursor = sim.session(self.db, self.aid)["cursor"]
+        o = sim.place_order(self.db, "me", self.aid, "m1", "crypto:BTC", "buy", "market", 10, mark=sim.last_price(self.db, self.aid), now=cursor)
+        self.assertEqual(o["status"], "open")
+        sim.step(self.db, "me", self.aid, 1)
+        self.assertEqual(self.state()["positions"][0]["avg_price"], self.bars[10]["open"])
+        sim.set_exits(self.db, "me", self.aid, "crypto:BTC", sim.last_price(self.db, self.aid), tp=114, now=sim.session(self.db, self.aid)["cursor"])
+        sim.step(self.db, "me", self.aid, 10)
+        s = self.state()
+        self.assertEqual(s["positions"], [])
+        self.assertEqual((s["history"][0]["reason"], s["history"][0]["fill_price"]), ("take profit", 114))
+
+    def test_rewind_restores_the_account_exactly(self):
+        def at(t):
+            cur = sim.session(self.db, self.aid)["cursor"]
+            sim.step(self.db, "me", self.aid, (t - cur) // 900)
+        sim.place_order(self.db, "me", self.aid, "a", "crypto:BTC", "buy", "market", 10, mark=110, now=self.start)
+        at(self.start + 3 * 900)
+        snap = self.state()
+        sim.place_order(self.db, "me", self.aid, "b", "crypto:BTC", "sell", "market", 4, mark=113, now=self.start + 3 * 900)
+        lim = sim.place_order(self.db, "me", self.aid, "c", "crypto:BTC", "sell", "limit", 6, price=200, now=self.start + 3 * 900)
+        at(self.start + 6 * 900)
+        sim.cancel_order(self.db, "me", self.aid, lim["id"], now=self.start + 6 * 900)
+        self.assertNotEqual(self.state()["summary"], snap["summary"])
+        sim.rewind(self.db, "me", self.aid, self.start + 3 * 900)
+        again = self.state()
+        self.assertEqual(sim.session(self.db, self.aid)["cursor"], self.start + 3 * 900)
+        for k in ("summary", "positions", "orders", "ledger"):
+            self.assertEqual(again[k], snap[k], k)
+        sim.rewind(self.db, "me", self.aid, 0)  # before the start: clamps to the start, everything undone
+        self.assertEqual((self.state()["summary"]["balance"], self.state()["positions"]), (10_000, []))
+
+    def test_session_needs_history_on_both_sides_of_the_start(self):
+        with self.assertRaises(ValueError):
+            sim.create_replay(self.db, "me", "R", "crypto", "BTC", "15m", "USD", 1000, self.bars[12:], self.start)
+        with self.assertRaises(ValueError):
+            sim.create_replay(self.db, "me", "R", "crypto", "BTC", "15m", "USD", 1000, self.bars[:10], self.start)
+
+
 if __name__ == "__main__":
     unittest.main()

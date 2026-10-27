@@ -1,5 +1,6 @@
 // Demo trading: virtual accounts live on the server (sim.py, /api/trading); the active chart's symbol is what gets traded.
 // The browser only asks: prices, fills and balances are computed server-side.
+// Replay: the server owns the simulated time and serves only bars closed by it; this file just asks it to step.
 const Trading = (() => {
   const $ = s => document.querySelector(s);
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -9,7 +10,8 @@ const Trading = (() => {
   const px = v => v == null ? '—' : fmtPrice(v);
   const when = t => t ? new Date(t * 1000).toLocaleString() : '';
   const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 12);
-  let st = null, tab = 'positions', side = 'buy', pendingId = null, timer;
+  const localInput = t => { const d = new Date(t * 1000); return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); }; // for <input type=datetime-local>
+  let st = null, tab = 'positions', side = 'buy', pendingId = null, timer, accounts = [], playing = false;
 
   async function api(path, method = 'GET', body) {
     const r = await fetch('/api/trading' + path, { method, headers: { 'content-type': 'application/json' }, body: body && JSON.stringify(body) });
@@ -33,16 +35,18 @@ const Trading = (() => {
     const m = $('#trade-menu');
     if (!m.hidden) return (m.hidden = true);
     m.innerHTML = `<button class="fly-item" data-a="paper">${UI.ICON.long}<span>Paper Trading</span></button>
-      <button class="fly-item" disabled title="Coming in the next update">${UI.ICON.undo}<span>Replay Trading</span><kbd>soon</kbd></button>`;
+      <button class="fly-item" data-a="replay">${UI.ICON.undo}<span>Replay Trading</span><kbd>history</kbd></button>`;
     const r = $('#trade-btn').getBoundingClientRect();
     m.hidden = false;
     m.style.top = r.bottom + 4 + 'px'; m.style.left = Math.max(4, Math.min(r.left, innerWidth - m.offsetWidth - 4)) + 'px';
     m.querySelector('[data-a=paper]').onclick = () => { m.hidden = true; openPaper(); };
+    m.querySelector('[data-a=replay]').onclick = () => { m.hidden = true; openNewReplay(); };
   }
 
   async function openPaper() {
     let list;
-    try { list = await api('/accounts'); } catch (e) { return toast(e.message); }
+    try { list = accounts = await api('/accounts'); } catch (e) { return toast(e.message); }
+    list = list.filter(a => a.mode === 'paper');
     if (!list.length) return openNewAccount();
     S.trade = { open: true, acc: list.some(a => a.id === S.trade?.acc) ? S.trade.acc : list[0].id };
     saveConfigs();
@@ -60,8 +64,99 @@ const Trading = (() => {
       const s = await api('/accounts', 'POST', { name: v('#acct-name'), currency: v('#acct-cur'), initial: +v('#acct-initial'), fee_bps: +v('#acct-fee'), slippage_bps: +v('#acct-slip') });
       $('#acct-dlg').close();
       S.trade = { open: true, acc: s.account.id }; saveConfigs();
+      accounts = await api('/accounts');
       show(s);
     } catch (e) { $('#acct-err').textContent = e.message; }
+  }
+
+  // ---------- replay ----------
+  function openNewReplay() {
+    const c = activePane().cfg;
+    $('#rp-src').innerHTML = ['crypto', 'us', 'ru'].map(k => `<option value="${k}" ${k === c.source ? 'selected' : ''}>${META.sources[k].label}</option>`).join('');
+    $('#rp-sym').value = ['crypto', 'us', 'ru'].includes(c.source) ? c.symbol : '';
+    $('#rp-tf').value = ['1m', '5m', '15m', '30m', '1h', '1d'].includes(c.tf) ? c.tf : '15m';
+    $('#rp-start').value ||= localInput(Date.now() / 1000 - 365 * 86400);
+    $('#rp-err').textContent = '';
+    $('#rp-dlg').showModal();
+    $('#rp-sym').focus();
+  }
+  async function createReplay() {
+    const v = id => $(id).value, btn = $('#rp-create');
+    btn.disabled = true; btn.textContent = 'Loading history…';
+    try {
+      const s = await api('/replays', 'POST', {
+        source: v('#rp-src'), symbol: v('#rp-sym').trim(), tf: v('#rp-tf'), start: Math.floor(new Date(v('#rp-start')) / 1000),
+        initial: +v('#rp-initial'), fee_bps: +v('#rp-fee'), slippage_bps: +v('#rp-slip'),
+      });
+      $('#rp-dlg').close();
+      S.trade = { open: true, acc: s.account.id }; saveConfigs();
+      accounts = await api('/accounts');
+      await show(s);
+      attach(activePane());
+    } catch (e) { $('#rp-err').textContent = e.message; }
+    finally { btn.disabled = false; btn.textContent = 'Start replay'; }
+  }
+  const replayPane = () => st?.replay && panes.find(p => p.cfg.replay === st.account.id);
+  // show the session on a chart: that chart leaves live data and only gets bars the server has released
+  function attach(pane) {
+    const r = st.replay;
+    panes.forEach(p => { if (p !== pane && p.cfg.replay === st.account.id) { delete p.cfg.replay; p.load(); } }); // one chart per session
+    pane.cfg.replay = st.account.id;
+    pane.cfg.source = r.source; pane.cfg.symbol = r.symbol;
+    if (!['1m', '5m', '15m', '30m', '1h', '1d'].includes(pane.cfg.tf) || META.timeframes.indexOf(pane.cfg.tf) < META.timeframes.indexOf(r.tf)) pane.cfg.tf = r.tf;
+    pane.load();
+  }
+  function detach(pane) {
+    pause();
+    delete pane.cfg.replay;
+    saveConfigs();
+    toast('Replay paused and left on the server. Reopen it from Trading → the account list, then "Show on chart".');
+  }
+  function pause() { playing = false; syncReplay(); }
+  function play() {
+    if (playing || !st?.replay) return;
+    if (!replayPane()) attach(activePane());
+    playing = true; syncReplay(); tick();
+  }
+  async function tick() {
+    if (!playing) return;
+    await stepBars(1);
+    if (playing) setTimeout(tick, 1000 / (st.replay?.speed || 1)); // 1× = one bar per second
+  }
+  async function stepBars(n) {
+    const pane = replayPane(), id = st.account.id;
+    try {
+      const s = await api(`/replays/${id}/step`, 'POST', { n, tf: pane?.cfg.tf || st.replay.tf });
+      if (st.account.id !== id) return;
+      if (pane) s.bars.forEach(b => pane.onBar(b));
+      if (!s.stepped) { pause(); toast('End of the loaded history: end the session or go back in time.'); }
+      show(s);
+    } catch (e) { pause(); toast(e.message); }
+  }
+  async function seek() {
+    const t = Math.floor(new Date($('#rp-seek').value) / 1000);
+    if (!t) return;
+    pause();
+    if (await act(`/replays/${st.account.id}/seek`, 'POST', { time: t })) replayPane()?.load();
+  }
+  function syncReplay() {
+    const r = st?.replay, box = $('#tr-replay');
+    box.hidden = !r;
+    if (!r) return;
+    $('#rp-play').textContent = playing ? '⏸ Pause' : '▶ Play';
+    $('#rp-play').classList.toggle('on', playing);
+    document.querySelectorAll('#rp-speed .tb').forEach(b => b.classList.toggle('on', +b.dataset.v === r.speed));
+    $('#rp-time').textContent = new Date(r.cursor * 1000).toLocaleString();
+    $('#rp-sym-l').textContent = `${r.symbol} · ${r.tf} bars`;
+    const pane = replayPane();
+    $('#rp-attach').hidden = !!pane;
+    if (pane) pane.el.querySelector('.title .meta').textContent = `${pane.cfg.tf} · REPLAY ${r.speed}× · ${new Date(r.cursor * 1000).toLocaleString()}`;
+  }
+  // Space plays / pauses while a replay is on screen; ui.js already ignores it inside inputs and dialogs
+  function onSpace() {
+    if (!st?.replay || $('#trade').hidden) return false;
+    playing ? pause() : play();
+    return true;
   }
 
   // ---------- panel ----------
@@ -70,18 +165,21 @@ const Trading = (() => {
     try { show(await api('/accounts/' + S.trade.acc)); }
     catch (e) { toast(e.message); if (/not found/.test(e.message)) close(); }
   }
-  function close() { S.trade = { ...S.trade, open: false }; saveConfigs(); $('#trade').hidden = true; clearInterval(timer); }
+  function close() { pause(); S.trade = { ...S.trade, open: false }; saveConfigs(); $('#trade').hidden = true; clearInterval(timer); }
 
   async function show(s) {
+    if (st && st.account.id !== s.account.id) pause();
     st = s;
     const panel = $('#trade');
     if (panel.hidden) {
       panel.hidden = false;
       clearInterval(timer);
-      timer = setInterval(() => !document.hidden && load(), 10000); // limit orders and SL/TP fill on the server as bars close
+      timer = setInterval(() => !document.hidden && !st?.replay && load(), 10000); // paper: limit orders and SL/TP fill on the server as bars close
     }
-    const a = s.account, m = s.summary, cur = a.currency, list = await api('/accounts').catch(() => [a]);
-    $('#tr-acc').innerHTML = list.map(x => `<option value="${x.id}" ${x.id === a.id ? 'selected' : ''}>${esc(x.name)} · ${x.currency}</option>`).join('');
+    const a = s.account, m = s.summary, cur = a.currency;
+    if (!accounts.some(x => x.id === a.id)) accounts = await api('/accounts').catch(() => [a]);
+    $('#tr-acc').innerHTML = accounts.map(x => `<option value="${x.id}" ${x.id === a.id ? 'selected' : ''}>${x.mode === 'replay' ? '⟲ ' : ''}${esc(x.name)} · ${x.currency}</option>`).join('');
+    syncReplay();
     $('#tr-stats').innerHTML = [['Balance', m.balance], ['Equity', m.equity], ['Free', m.free], ['Realized', m.realized, 1], ['Unrealized', m.unrealized, 1], ['Fees', m.fees]]
       .map(([k, v, sg]) => `<span><i>${k}</i><b class="${sg ? signed(v) : ''}">${money(v)}</b></span>`).join('') + `<span><i>Currency</i><b>${esc(cur)}</b></span>`;
     const errs = Object.entries(s.errors || {});
@@ -115,10 +213,11 @@ const Trading = (() => {
     }[tab]();
   }
 
-  // the order form trades the active chart's symbol
+  // the order form trades the active chart's symbol, or the replay's instrument
+  const target = () => st?.replay || activePane()?.cfg;
   function syncSymbol() {
     if (!st || $('#trade').hidden) return;
-    const c = activePane()?.cfg;
+    const c = target();
     if (!c) return;
     $('#tr-sym').textContent = c.symbol;
     $('#tr-src').textContent = META.sources[c.source].label;
@@ -127,11 +226,13 @@ const Trading = (() => {
     document.querySelectorAll('#tr-side .tb').forEach(b => b.classList.toggle('on', b.dataset.s === side));
     $('#tr-submit').textContent = `${side === 'buy' ? 'Buy' : 'Sell'} ${c.symbol}`;
     $('#tr-submit').className = 'btn primary ' + side;
+    $('#tr-note').textContent = st.replay ? 'Market orders fill at the next bar\'s open ± slippage; limits only on later bars.'
+      : 'Market orders fill at the server\'s last price ± slippage; stock quotes can be delayed.';
   }
 
   async function submit(e) {
     e.preventDefault();
-    const c = activePane().cfg, type = $('#tr-type').value, btn = $('#tr-submit');
+    const c = target(), type = $('#tr-type').value, btn = $('#tr-submit');
     const sent = pendingId ||= newId(); // kept until the server answers, so a retry after a network error can't trade twice
     btn.disabled = true;
     const ok = await act(`/accounts/${st.account.id}/orders`, 'POST', {
@@ -173,8 +274,15 @@ const Trading = (() => {
     $('#tr-form').onsubmit = submit;
     $('#tr-tabs').onclick = e => { const b = e.target.closest('[data-k]'); if (b) { tab = b.dataset.k; renderTable(); } };
     $('#tr-table').onclick = onTableClick;
+    $('#rp-create').onclick = createReplay;
+    $('#rp-dlg').addEventListener('keydown', e => e.key === 'Enter' && e.target.tagName === 'INPUT' && createReplay());
+    $('#rp-play').onclick = () => playing ? pause() : play();
+    $('#rp-step').onclick = () => { pause(); if (!replayPane()) attach(activePane()); stepBars(1); };
+    $('#rp-speed').onclick = e => { const b = e.target.closest('[data-v]'); if (b) act(`/replays/${st.account.id}`, 'PUT', { speed: +b.dataset.v }); };
+    $('#rp-go').onclick = seek;
+    $('#rp-attach').onclick = () => attach(activePane());
     if (S.trade?.open) load();
   }
 
-  return { init, syncSymbol };
+  return { init, syncSymbol, detach, onSpace };
 })();

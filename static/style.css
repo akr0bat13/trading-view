@@ -236,3 +236,17 @@ select.tb.sel option { background: var(--panel); }
   .tr-tables { min-height: 240px; }
   .tr-demo { display: none; }
 }
+
+/* replay */
+.pane.replay { border-color: #ff9800 !important; }
+.pane.replay .bar .title .meta { color: #ff9800; }
+#tr-replay { display: flex; align-items: center; gap: 4px; padding: 0 8px; height: 38px; border-bottom: 1px solid var(--line); background: rgba(255, 152, 0, .07); white-space: nowrap; overflow-x: auto; scrollbar-width: none; }
+#tr-replay[hidden] { display: none; }
+.rp-tag { color: #ff9800; font-weight: 700; font-size: 11px; border: 1px solid #ff980077; border-radius: 3px; padding: 1px 5px; margin-right: 6px; }
+#rp-sym-l { margin-right: 8px; }
+#rp-play.on, #rp-speed .tb.on { color: #ff9800; }
+.rp-now { margin-left: 8px; font-variant-numeric: tabular-nums; }
+#rp-seek { padding: 3px 6px; color-scheme: dark; }
+#rp-attach[hidden] { display: none; }
+.form .hint { color: var(--muted); font-size: 12px; }
+#rp-start { color-scheme: dark; }

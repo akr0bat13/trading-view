@@ -217,6 +217,7 @@ class Pane {
   }
 
   setSymbol(source, symbol, fromSync) {
+    if (this.cfg.replay && (source !== this.cfg.source || normSymbol(source, symbol) !== this.cfg.symbol)) Trading.detach(this); // the session stays, paused
     Object.assign(this.cfg, { source, symbol: normSymbol(source, symbol) });
     this.load();
     if (S.syncSymbol && !fromSync) panes.forEach(p => p !== this && p.setSymbol(source, symbol, true));
@@ -275,7 +276,8 @@ class Pane {
     this.pending = null; this.noMore = false; this.olderBusy = false; this.userMoved = false;
     const { source, symbol, tf } = this.cfg, token = this.token = {};
     this.el.querySelector('.title b').textContent = symbol;
-    this.el.querySelector('.title .meta').textContent = `${tf} · ${META.sources[source].label}`;
+    this.el.querySelector('.title .meta').textContent = `${tf} · ${this.cfg.replay ? 'REPLAY' : META.sources[source].label}`;
+    this.el.classList.toggle('replay', !!this.cfg.replay);
     if (this === activePane()) UI.syncHeader();
     this.msg.textContent = `Loading ${symbol} ${tf}…`;
     this.px.textContent = '—'; this.chg.textContent = '';
@@ -298,7 +300,9 @@ class Pane {
     this.refresh(false);
     this.showOhlc();
 
-    if (META.sources[source].live === 'hyperliquid') {
+    if (this.cfg.replay) {
+      this.stop = () => { }; // new bars arrive only from Trading's replay steps
+    } else if (META.sources[source].live === 'hyperliquid') {
       this.stop = HL.on(symbol, tf, bar => this.onBar(bar));
     } else {
       const id = setInterval(async () => {
@@ -329,9 +333,9 @@ class Pane {
   }
 
   async fetchBars(before) {
-    const { source, symbol, tf } = this.cfg, q = { source, symbol, tf };
+    const { source, symbol, tf, replay } = this.cfg, q = replay ? { tf } : { source, symbol, tf };
     if (before) q.before = before;
-    const r = await fetch(`/api/candles?${new URLSearchParams(q)}`);
+    const r = await fetch(replay ? `/api/trading/replays/${replay}/bars?${new URLSearchParams(q)}` : `/api/candles?${new URLSearchParams(q)}`);
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || r.statusText);
     return j;
@@ -345,7 +349,7 @@ class Pane {
     if (t === 'heikin') this.candles.setData(this.seriesData());
     else this.candles.update(t === 'line' || t === 'area' ? { time: bar.time, value: bar.close } : bar);
     this.msg.textContent = '';
-    Alerts.check(this, last?.close, bar.close);
+    if (!this.cfg.replay) Alerts.check(this, last?.close, bar.close);
     if (!this.hovering) this.showOhlc();
     this.refresh(true);
   }

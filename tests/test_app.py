@@ -134,6 +134,49 @@ class TradingApiTest(unittest.TestCase):
         s = self.c.delete(f"/api/trading/accounts/{self.aid}/orders/{oid}").get_json()
         self.assertEqual((s["orders"], s["history"][0]["status"]), ([], "cancelled"))
 
+    def test_replay_session_over_http(self):
+        start = self.t - 30 * 86400
+        hist = [self.bar(start + (i - 20) * 3600, 100 + i, 101 + i, 99 + i, 100.5 + i) for i in range(60)]
+        with mock.patch.object(self.m.data_source, "history", return_value=hist) as h:
+            r = self.c.post("/api/trading/replays", json={"source": "crypto", "symbol": "BTC", "tf": "1h", "start": start + 5, "initial": 1000})
+        self.assertEqual(r.status_code, 201, r.get_json())
+        self.assertEqual(h.call_args.args[:4], ("crypto", "BTC", "1h", start))
+        rid, rep = r.get_json()["account"]["id"], r.get_json()["replay"]
+        self.assertEqual(rep["cursor"], start)
+        bars = self.c.get(f"/api/trading/replays/{rid}/bars?tf=1h").get_json()
+        self.assertEqual(bars[-1]["time"], start - 3600)  # nothing at or after the start
+        o = self.c.post(f"/api/trading/accounts/{rid}/orders", json={"client_order_id": "replay-001", "source": "crypto", "symbol": "BTC",
+                                                                    "side": "buy", "type": "market", "qty": 1}).get_json()
+        self.assertEqual(o["orders"][0]["status"], "open")  # waits for the next bar's open, no live price involved
+        self.assertEqual(self.c.post(f"/api/trading/accounts/{rid}/orders", json={"client_order_id": "replay-002", "source": "crypto", "symbol": "ETH",
+                                                                                 "side": "buy", "type": "market", "qty": 1}).status_code, 400)
+        s = self.c.post(f"/api/trading/replays/{rid}/step", json={"n": 3, "tf": "1h"}).get_json()
+        self.assertEqual((s["stepped"], s["replay"]["cursor"], s["bars"][-1]["time"]), (3, start + 3 * 3600, start + 2 * 3600))
+        self.assertAlmostEqual(s["positions"][0]["avg_price"], 120 * 1.0002)  # open of the first bar after the order + 2 bps slippage
+        s = self.c.post(f"/api/trading/replays/{rid}/seek", json={"time": start}).get_json()
+        self.assertEqual((s["positions"], s["orders"], s["replay"]["cursor"]), ([], [], start))
+        self.assertEqual(self.c.put(f"/api/trading/replays/{rid}", json={"speed": 3}).status_code, 400)
+        self.assertEqual(self.c.put(f"/api/trading/replays/{rid}", json={"speed": 5}).get_json()["replay"]["speed"], 5)
+        self.assertEqual(self.c.get(f"/api/trading/replays/{rid}/bars?tf=15m").status_code, 400)
+        self.assertEqual(self.c.get(f"/api/trading/replays/{self.aid}/bars?tf=1h").status_code, 404)  # a paper account has no session
+        with mock.patch.object(self.m.data_source, "history", return_value=hist[25:]):
+            r = self.c.post("/api/trading/replays", json={"source": "crypto", "symbol": "BTC", "tf": "1h", "start": start, "initial": 1000})
+        self.assertIn("only available from", r.get_json()["error"])
+
+
+class HistoryTest(unittest.TestCase):
+    def test_pages_back_to_the_warmup_and_stops_when_the_source_runs_out(self):
+        import data_source
+
+        def fetch(symbol, tf, before=None):  # 100 one-minute bars per page, none before t=50000
+            return [{"time": t} for t in range(max(50000, before - 6000), before, 60)]
+        with mock.patch.dict(data_source.HISTORY, {"crypto": fetch}):
+            bars = data_source.history("crypto", "BTC", "1m", start=200000, end=230000, warmup=300)
+            times = [b["time"] for b in bars]
+            self.assertEqual((times[0], times[-1]), (200000 - 300 * 60, 229940))
+            self.assertEqual(times, sorted(set(times)))  # no gaps or duplicates between pages
+            self.assertEqual(data_source.history("crypto", "BTC", "1m", start=60000, end=70000)[0]["time"], 50000)
+
 
 if __name__ == "__main__":
     unittest.main()
