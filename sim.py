@@ -49,12 +49,20 @@ CREATE TABLE IF NOT EXISTS ledger (
 """
 
 
+# columns added to SCHEMA after the first release; keep in step with SCHEMA
+LATER_COLUMNS = (("orders", "closed_at", "INTEGER"), ("accounts", "checked_at", "INTEGER NOT NULL DEFAULT 0"),
+                 ("positions", "since", "INTEGER NOT NULL DEFAULT 0"))
+
+
 def connect(path):
     db = sqlite3.connect(path, isolation_level=None, check_same_thread=False)  # transactions are explicit, see tx()
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA foreign_keys = ON")
     db.execute("PRAGMA journal_mode = WAL")
     db.executescript(SCHEMA)
+    for table, col, ddl in LATER_COLUMNS:  # CREATE IF NOT EXISTS leaves a database made by an older version without these
+        if col not in {r["name"] for r in db.execute(f"PRAGMA table_info({table})")}:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
     return db
 
 

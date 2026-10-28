@@ -273,3 +273,13 @@ class ReportTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_connect_adds_columns_missing_from_an_older_database(tmp_path):
+    import sqlite3
+    path = str(tmp_path / "old.db")
+    old = sqlite3.connect(path)
+    old.execute("CREATE TABLE orders (id INTEGER PRIMARY KEY, reason TEXT, created_at INTEGER NOT NULL)")
+    old.commit(); old.close()
+    db = sim.connect(path)
+    assert "closed_at" in {r["name"] for r in db.execute("PRAGMA table_info(orders)")}
