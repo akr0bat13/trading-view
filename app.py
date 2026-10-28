@@ -1,5 +1,6 @@
 import hmac
 import json
+import math
 import os
 import re
 import threading
@@ -247,8 +248,9 @@ def trading_get(aid):
 
 @trading.post("/accounts/<int:aid>/orders")
 def trading_order(aid):
-    """Body: {client_order_id, source, symbol, side, type, qty, price?}. Any price or balance the client sends besides
-    a limit price is ignored: market orders fill at the server's own last price."""
+    """Body: {client_order_id, source, symbol, side, type, qty | notional, price?}. Any price or balance the client sends
+    besides a limit price is ignored: market orders fill at the server's own last price. notional = amount in the
+    account currency, turned into a quantity at the limit price or the server's price (whole shares for stocks)."""
     a = sim.account(DB, owner(), aid)
     j = request.get_json(silent=True) or {}
     cid, source, symbol, qty = client_id(j), j.get("source"), str(j.get("symbol") or "").strip(), j.get("qty")
@@ -260,6 +262,14 @@ def trading_order(aid):
         raise ValueError("unknown instrument")
     key = f"{source}:{symbol}"
     now, mark, instant = clock(a, key)
+    if "notional" in j:
+        n, ref = j["notional"], j.get("price") if j.get("type") == "limit" else mark
+        if not sim._num(n):
+            raise ValueError("amount must be a positive number")
+        qty = n / ref if sim._num(ref) else n  # no usable price: place_order rejects the order and says why
+        qty = math.floor(qty) if source in WHOLE_SHARES else math.floor(qty * 1e8) / 1e8
+        if qty <= 0:
+            raise ValueError(f"{n:g} {a['currency']} is less than one share")
     sim.place_order(DB, owner(), aid, cid, key, j.get("side"), j.get("type"), qty, price=j.get("price"), mark=mark, now=now,
                     fill_at=instant and j.get("type") == "market" and mark and sim.slipped(mark, j.get("side"), a["slippage_bps"]) or None)
     return trading_state(aid)

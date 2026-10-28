@@ -284,11 +284,15 @@ const Trading = (() => {
     $('#tr-src').textContent = META.sources[c.source].label;
     const limit = $('#tr-type').value === 'limit';
     $('#tr-price-f').hidden = !limit;
+    const unit = $('#tr-unit').value || 'qty';
+    $('#tr-unit').innerHTML = `<option value="qty">${esc(c.symbol)}</option><option value="cash">${esc(st.account.currency)}</option>`;
+    $('#tr-unit').value = unit;
     document.querySelectorAll('#tr-side .tb').forEach(b => b.classList.toggle('on', b.dataset.s === side));
     $('#tr-submit').textContent = `${side === 'buy' ? 'Buy' : 'Sell'} ${c.symbol}`;
     $('#tr-submit').className = 'btn primary ' + side;
     $('#tr-note').textContent = ended() ? 'This session has ended: see its Report, or Reset to trade again.' : st.replay ? 'Market orders fill at the next bar\'s open ± slippage; limits only on later bars.'
       : 'Market orders fill at the server\'s last price ± slippage; stock quotes can be delayed.';
+    if (unit === 'cash' && !ended()) $('#tr-note').textContent += ` The ${st.account.currency} amount becomes a quantity at the ${limit ? 'limit' : 'current'} price; the fee comes on top.`;
   }
 
   async function submit(e) {
@@ -298,7 +302,7 @@ const Trading = (() => {
     btn.disabled = true;
     const ok = await act(`/accounts/${st.account.id}/orders`, 'POST', {
       client_order_id: sent, source: c.source, symbol: c.symbol, side, type,
-      qty: +$('#tr-qty').value, ...(type === 'limit' ? { price: +$('#tr-price').value } : {}),
+      [$('#tr-unit').value === 'cash' ? 'notional' : 'qty']: +$('#tr-qty').value, ...(type === 'limit' ? { price: +$('#tr-price').value } : {}),
     });
     btn.disabled = false;
     if (ok) {
