@@ -185,6 +185,7 @@ select.tb.sel option { background: var(--panel); }
 
 /* demo trading */
 #trade-btn { color: #f0b90b; }
+#bot-btn { color: #2962ff; }
 .menu { position: fixed; z-index: 30; min-width: 210px; padding: 4px 0; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 4px 14px rgba(0, 0, 0, .45); }
 .menu[hidden] { display: none; }
 .fly-item:disabled { color: var(--muted); cursor: default; background: none; }
@@ -245,7 +246,7 @@ select.tb.sel option { background: var(--panel); }
 #rep-body td { padding: 4px 8px; border-top: 1px solid var(--line); }
 .tbl-wrap { overflow-x: auto; }
 @media (max-width: 900px) {
-  #trade-btn span { display: none; }
+  #trade-btn span, #bot-btn span { display: none; }
   #trade { height: 55vh; }
   .tr-body { flex-direction: column; overflow-y: auto; }
   #tr-form { width: auto; border-right: 0; border-bottom: 1px solid var(--line); overflow: visible; }
@@ -266,3 +267,12 @@ select.tb.sel option { background: var(--panel); }
 #rp-attach[hidden] { display: none; }
 .form .hint { color: var(--muted); font-size: 12px; }
 #rp-start { color-scheme: dark; }
+
+/* paper bot dialog */
+#bot-body { overflow: auto; padding: 0 16px 8px; }
+.bot-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin-bottom: 10px; }
+.bot-tile { border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; display: flex; flex-direction: column; }
+.bot-tile span { color: var(--muted); font-size: 11px; } .bot-tile b { font-size: 16px; font-variant-numeric: tabular-nums; }
+.bot-curve { margin-bottom: 8px; }
+#bot-body #tr-table { max-height: 300px; padding: 0; }
+.bot-curve svg { width: 100%; height: 120px; display: block; }

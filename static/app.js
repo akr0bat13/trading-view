@@ -279,6 +279,14 @@ class Pane {
     this.ohlc.innerHTML = ['O', 'H', 'L', 'C'].map((k, i) => `${k}<i class="${cls}">${f([b.open, b.high, b.low, b.close][i])}</i>`).join('');
   }
 
+  // frame [from, to] (unix seconds) once the bars are there; used by the Bot panel to show a trade
+  showRange(from, to) { this.wantRange = [from, to]; if (this.bars.length) this.applyWantedRange(); }
+  applyWantedRange() {
+    if (!this.wantRange) return;
+    const [from, to] = this.wantRange; this.wantRange = null;
+    try { this.chart.timeScale().setVisibleRange({ from: Math.max(from, this.bars[0].time), to: Math.min(to, this.bars.at(-1).time) }); } catch { }
+  }
+
   drawKey() { return `${this.cfg.source}:${this.cfg.symbol}`; }
 
   async load() {
@@ -308,6 +316,7 @@ class Pane {
     this.applyBotMarkers();
     this.chart.timeScale().fitContent();
     this.chart.timeScale().applyOptions({ rightOffset: 5 });
+    this.applyWantedRange();
     this.refresh(false);
     this.showOhlc();
 
@@ -579,6 +588,7 @@ async function init() {
   BOT.refresh(); setInterval(() => BOT.refresh(), 60000);
   UI.init();
   Trading.init();
+  BotPanel.init();
   setCount(COUNTS.includes(S.count) ? S.count : 4);
   (function watchViews() {
     panes.forEach(p => { if (p.viewKey() !== p.lastView) p.scheduleDraw(); });
