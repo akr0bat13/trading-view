@@ -21,6 +21,7 @@
     <button id="sync-symbol" class="tb icon" title="Sync symbol between charts"></button>
     <span class="spacer"></span>
     <span id="badges"></span>
+    <button id="bot-btn" class="tb" title="The paper bot's account: results and trades"></button>
     <button id="trade-btn" class="tb" title="Demo trading with virtual money"></button>
     <button id="lay-btn" class="tb icon" title="Layouts: save and restore sets of charts"></button>
     <button id="shot-btn" class="tb icon" title="Save chart as PNG (Alt+S)"></button>
@@ -127,6 +128,11 @@
     <div class="dlg-foot"><span class="hint">Past results do not guarantee future profit.</span><span class="spacer"></span><button id="rp-create" class="btn primary">Start replay</button></div>
   </dialog>
 
+  <dialog id="bot-dlg" class="dlg wide">
+    <div class="dlg-head"><span class="dlg-title">Bot account · paper</span><button class="x" value="close">✕</button></div>
+    <div id="bot-body"></div>
+  </dialog>
+
   <dialog id="rep-dlg" class="dlg wide">
     <div class="dlg-head"><span class="dlg-title" id="rep-title">Results</span><button class="x" value="close">✕</button></div>
     <div id="rep-body"></div>
@@ -152,6 +158,7 @@
   <script src="drawings.js"></script>
   <script src="app.js"></script>
   <script src="trading.js"></script>
+  <script src="botpanel.js"></script>
   <script src="ui.js"></script>
 </body>
 </html>

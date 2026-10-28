@@ -47,6 +47,19 @@ class AppTest(unittest.TestCase):
         self.assertEqual(get.call_args.kwargs["params"], {"limit": 5})
 
 
+    def test_bot_summary(self):
+        m = load()
+        t = lambda i, st, pnl, r, day: {"id": i, "status": st, "pnl": pnl, "r_multiple": r, "fees": "1", "closed_at": f"2026-10-{day:02d}T00:00:00Z"}
+        out = m.bot_summary([t(1, "closed", "30", "2", 3), t(2, "closed", "-20", "-1", 1), t(3, "closed", "-25", "-1.2", 2),
+                             {"id": 4, "status": "open"}, {"id": 5, "status": "skipped"}])
+        self.assertEqual((out["closed"], out["wins"], out["no_entry"], len(out["open"])), (3, 1, 1, 1))
+        self.assertEqual([c[1] for c in out["curve"]], [-20, -45, -15])  # ordered by closing time
+        self.assertEqual((out["pnl"], out["max_drawdown"], out["profit_factor"], out["fees"]), (-15, 45, 30 / 45, 3))
+        self.assertAlmostEqual(out["total_r"], -0.2)
+        self.assertIsNone(m.bot_summary([])["win_rate"])
+        self.assertIsNone(m.bot_summary([t(1, "closed", "5", "1", 1)])["profit_factor"])
+
+
 class TradingApiTest(unittest.TestCase):
     """Paper trading over HTTP with the market data mocked: fills come only from server-side prices."""
 

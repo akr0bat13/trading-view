@@ -70,19 +70,53 @@ def quotes():
         return jsonify(error=str(e)), 502
 
 
+def fetch_bot_trades(limit):
+    base, token = os.environ.get("ANALYTICS_URL", "").rstrip("/"), os.environ.get("ANALYTICS_TOKEN", "")
+    if not base or not token:
+        return None, (jsonify(error="ANALYTICS_URL and ANALYTICS_TOKEN are not set"), 503)
+    try:
+        r = requests.get(f"{base}/api/v1/trader/trades", params={"limit": limit},
+                         headers={"Authorization": f"Bearer {token}"}, timeout=10)
+        r.raise_for_status()
+        return r.json(), None
+    except (requests.RequestException, ValueError) as e:
+        return None, (jsonify(error=str(e)), 502)
+
+
 @app.get("/api/bot/trades")
 def bot_trades():
     """Trades of the paper bot from analytics-api, for the entry/exit arrows. The service token stays on the server."""
-    base, token = os.environ.get("ANALYTICS_URL", "").rstrip("/"), os.environ.get("ANALYTICS_TOKEN", "")
-    if not base or not token:
-        return jsonify(error="ANALYTICS_URL and ANALYTICS_TOKEN are not set"), 503
-    try:
-        r = requests.get(f"{base}/api/v1/trader/trades", params={"limit": request.args.get("limit", 200, type=int)},
-                         headers={"Authorization": f"Bearer {token}"}, timeout=10)
-        r.raise_for_status()
-        return jsonify(r.json())
-    except (requests.RequestException, ValueError) as e:
-        return jsonify(error=str(e)), 502
+    trades, err = fetch_bot_trades(request.args.get("limit", 200, type=int))
+    return err or jsonify(trades)
+
+
+def bot_summary(trades):
+    """Results of the bot's closed trades: PnL is net of fees (USDT), R is PnL over the risk at entry. The curve is cumulative PnL."""
+    closed = sorted((t for t in trades if t.get("status") == "closed" and t.get("pnl") is not None), key=lambda t: t["closed_at"])
+    pnl = [float(t["pnl"]) for t in closed]
+    rs = [float(t["r_multiple"]) for t in closed if t.get("r_multiple") is not None]
+    wins, losses = sum(v for v in pnl if v > 0), -sum(v for v in pnl if v < 0)
+    curve, acc, peak, dd = [], 0.0, 0.0, 0.0
+    for t, v in zip(closed, pnl):
+        acc += v
+        peak = max(peak, acc)
+        dd = max(dd, peak - acc)  # drawdown from the best cumulative PnL so far (the start counts as 0)
+        curve.append([t["closed_at"], acc])
+    return {
+        "closed": len(closed), "wins": sum(v > 0 for v in pnl), "win_rate": sum(v > 0 for v in pnl) / len(pnl) if pnl else None,
+        "pnl": acc, "fees": sum(float(t.get("fees") or 0) for t in closed), "total_r": sum(rs), "avg_r": sum(rs) / len(rs) if rs else None,
+        "profit_factor": wins / losses if losses else None,  # None: no losing trade yet
+        "max_drawdown": dd, "curve": curve,
+        "open": [t for t in trades if t.get("status") == "open"],
+        "no_entry": sum(t.get("status") in ("skipped", "rejected") for t in trades),
+    }
+
+
+@app.get("/api/bot/report")
+def bot_report():
+    """The bot's own account: totals, equity curve, open position and entered trades, computed from the same ledger."""
+    trades, err = fetch_bot_trades(500)
+    return err or jsonify(summary=bot_summary(trades), trades=[t for t in trades if t.get("opened_at")])
 
 
 # UI state (settings, drawings, layouts, ...) lives in local JSON files under state/,

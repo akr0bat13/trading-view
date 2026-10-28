@@ -175,12 +175,15 @@ class Pane {
     this.botMarkers = LC.createSeriesMarkers(this.candles, []);
     this.tradeMarkers = LC.createSeriesMarkers(this.candles, []);
     this.tradeLines = [];
+    this.botLines = [];
     this.applyBotMarkers();
   }
-  // entries and exits of the paper bot, on the BTC chart only (the bot trades BTCUSDT)
+  // entries, exits and the open position of the paper bot, on the charts of the symbols it trades
   applyBotMarkers() {
-    const btc = this.cfg.source === 'crypto' && this.cfg.symbol === 'BTC';
-    this.botMarkers?.setMarkers(btc ? BotMarkers.build(BOT.trades, this.bars) : []);
+    const mine = this.cfg.source === 'crypto' ? BotMarkers.forSymbol(BOT.trades, this.cfg.symbol) : [];
+    this.botMarkers?.setMarkers(BotMarkers.build(mine, this.bars));
+    this.botLines?.forEach(l => this.candles.removePriceLine(l));
+    this.botLines = BotMarkers.lines(mine).map(o => this.candles.createPriceLine({ lineWidth: 1, axisLabelVisible: true, ...o }));
     this.applyTrade();
   }
   // the open demo account's fills, position, SL/TP and limit orders for this chart's symbol (empty when it doesn't apply)
@@ -579,6 +582,7 @@ async function init() {
   BOT.refresh(); setInterval(() => BOT.refresh(), 60000);
   UI.init();
   Trading.init();
+  BotPanel.init();
   setCount(COUNTS.includes(S.count) ? S.count : 4);
   (function watchViews() {
     panes.forEach(p => { if (p.viewKey() !== p.lastView) p.scheduleDraw(); });
