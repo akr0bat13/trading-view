@@ -47,6 +47,14 @@ class AppTest(unittest.TestCase):
         self.assertEqual(get.call_args.kwargs["params"], {"limit": 5})
 
 
+    def test_bot_replay_is_served_without_analytics(self):
+        c = load().app.test_client()  # no ANALYTICS_URL: live answers 503, the saved replay still works
+        j = c.get("/api/bot/report?source=replay").get_json()
+        self.assertEqual((j["summary"]["closed"], len(j["trades"])), (60, 60))
+        self.assertIn("replay", j["meta"]["source"])
+        self.assertEqual(len(c.get("/api/bot/trades?source=replay").get_json()), 60)
+        self.assertEqual(c.get("/api/bot/report").status_code, 503)
+
     def test_bot_summary(self):
         m = load()
         t = lambda i, st, pnl, r, day: {"id": i, "status": st, "pnl": pnl, "r_multiple": r, "fees": "1", "closed_at": f"2026-10-{day:02d}T00:00:00Z"}
