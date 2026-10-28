@@ -12,7 +12,8 @@ const Trading = (() => {
   const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 12);
   const pct = v => v == null ? '—' : (v = round(v * 100), `${v < 0 ? '−' : ''}${Math.abs(v).toFixed(2)}%`);
   const localInput = t => { const d = new Date(t * 1000); return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); }; // for <input type=datetime-local>
-  let st = null, tab = 'positions', side = 'buy', pendingId = null, timer, accounts = [], playing = false;
+  const TM = TradeMarkers;
+  let forceRender = false, st = null, tab = 'positions', side = 'buy', pendingId = null, timer, accounts = [], playing = false;
 
   async function api(path, method = 'GET', body) {
     const r = await fetch('/api/trading' + path, { method, headers: { 'content-type': 'application/json' }, body: body && JSON.stringify(body) });
@@ -241,7 +242,7 @@ const Trading = (() => {
     $('#trade').classList.toggle('ended', ended());
     syncReplay();
     $('#tr-stats').innerHTML = [['Balance', m.balance], ['Equity', m.equity], ['Free', m.free], ['Realized', m.realized, 1], ['Unrealized', m.unrealized, 1], ['Fees', m.fees]]
-      .map(([k, v, sg]) => `<span><i>${k}</i><b class="${sg ? signed(v) : ''}">${money(v)}</b></span>`).join('') + `<span><i>Currency</i><b>${esc(cur)}</b></span>`;
+      .map(([k, v, sg]) => `<span><i>${k}</i><b class="${sg ? signed(v) : ''}">${sg ? TM.pnl(v) : money(v)}</b></span>`).join('') + `<span><i>Currency</i><b>${esc(cur)}</b></span>`;
     const errs = Object.entries(s.errors || {});
     $('#tr-warn').textContent = errs.length ? `No market data for ${errs.map(e => e[0]).join(', ')}: nothing filled for it until data returns.` : '';
     syncSymbol();
@@ -251,15 +252,17 @@ const Trading = (() => {
 
   function renderTable() {
     if (!st) return;
+    // the 10 s refresh must not wipe an SL/TP value that is being typed
+    if (!forceRender && [...$('#tr-table').querySelectorAll('input')].some(i => i.value !== i.defaultValue)) return;
     const cur = st.account.currency, counts = { positions: st.positions.length, orders: st.orders.length };
     $('#tr-tabs').innerHTML = [['positions', 'Positions'], ['orders', 'Orders'], ['history', 'History'], ['ledger', 'Balance']]
       .map(([k, l]) => `<button class="tb ${k === tab ? 'on' : ''}" data-k="${k}">${l}${counts[k] ? ` <span class="n">${counts[k]}</span>` : ''}</button>`).join('');
     const sym = k => esc(k.split(':')[1]), sideCell = (sd, q) => `<span class="${sd === 'buy' ? 'up' : 'down'}">${sd === 'buy' ? 'Buy' : 'Sell'}</span> ${q}`;
     const table = (head, rows, empty) => rows.length ? `<table><tr>${head.map(h => `<th>${h}</th>`).join('')}</tr>${rows.join('')}</table>` : `<div class="tr-empty">${empty}</div>`;
     $('#tr-table').innerHTML = {
-      positions: () => table(['Symbol', 'Side', 'Qty', 'Avg price', 'Last', 'Unrealized PnL', 'Stop loss', 'Take profit', ''],
+      positions: () => table(['Symbol', 'Side', 'Qty', 'Avg price', 'Last', 'PnL', 'Stop loss', 'Take profit', ''],
         st.positions.map(p => `<tr data-k="${esc(p.symbol)}"><td><b>${sym(p.symbol)}</b></td><td class="${p.qty > 0 ? 'up' : 'down'}">${p.qty > 0 ? 'Long' : 'Short'}</td>
-          <td>${Math.abs(p.qty)}</td><td>${px(p.avg_price)}</td><td>${px(p.mark)}</td><td class="${signed(p.unrealized)}">${money(p.unrealized, cur)}</td>
+          <td>${Math.abs(p.qty)}</td><td>${px(p.avg_price)}</td><td>${px(p.mark)}</td><td class="${signed(p.unrealized)}">${p.unrealized == null ? '—' : `${TM.pnl(p.unrealized)} ${cur}<br><small>${TM.pnlPct(p.unrealized, Math.abs(p.qty) * p.avg_price)}</small>`}</td>
           <td><input type="number" step="any" data-f="sl" value="${p.sl ?? ''}" placeholder="—"></td><td><input type="number" step="any" data-f="tp" value="${p.tp ?? ''}" placeholder="—"></td>
           <td class="acts"><button class="btn" data-a="exits">Set SL/TP</button><button class="btn" data-a="close">Close</button></td></tr>`), 'No open positions'),
       orders: () => table(['Placed', 'Symbol', 'Side', 'Type', 'Limit', ''],
@@ -290,14 +293,36 @@ const Trading = (() => {
     document.querySelectorAll('#tr-side .tb').forEach(b => b.classList.toggle('on', b.dataset.s === side));
     $('#tr-submit').textContent = `${side === 'buy' ? 'Buy' : 'Sell'} ${c.symbol}`;
     $('#tr-submit').className = 'btn primary ' + side;
+    $('#tr-est').textContent = estimate(c);
     $('#tr-note').textContent = ended() ? 'This session has ended: see its Report, or Reset to trade again.' : st.replay ? 'Market orders fill at the next bar\'s open ± slippage; limits only on later bars.'
       : 'Market orders fill at the server\'s last price ± slippage; stock quotes can be delayed.';
     if (unit === 'cash' && !ended()) $('#tr-note').textContent += ` The ${st.account.currency} amount becomes a quantity at the ${limit ? 'limit' : 'current'} price; the fee comes on top.`;
   }
 
+  // what the optional SL / TP would mean for this order, from the limit price or the chart's last price
+  function legs(c) {
+    const limit = $('#tr-type').value === 'limit', ref = limit ? +$('#tr-price').value : activePane()?.bars.at(-1)?.close;
+    const v = id => $(id).value === '' ? null : +$(id).value, n = +$('#tr-qty').value;
+    return { ref, sl: v('#tr-sl'), tp: v('#tr-tp'), qty: $('#tr-unit').value === 'cash' ? n / ref : n };
+  }
+  function estimate(c) {
+    const { ref, sl, tp, qty } = legs(c), dir = side === 'buy' ? 1 : -1;
+    if (!(ref > 0 && qty > 0)) return '';
+    const one = (name, lvl) => lvl == null ? '' : `${name} ${TM.pnl(dir * qty * (lvl - ref))} ${st.account.currency} (${TM.pnlPct(dir * (lvl - ref), ref)})`;
+    return [one('SL', sl), one('TP', tp)].filter(Boolean).join(' · ');
+  }
+  // same rule as the server (sim.set_exits), checked before the order so a bad level doesn't open a position first
+  function levelError(c) {
+    const { ref, sl, tp } = legs(c), long = side === 'buy';
+    if (sl != null && !(long ? sl < ref : sl > ref)) return `Stop loss must be ${long ? 'below' : 'above'} the entry price (${px(ref)}) for a ${long ? 'long' : 'short'}`;
+    if (tp != null && !(long ? tp > ref : tp < ref)) return `Take profit must be ${long ? 'above' : 'below'} the entry price (${px(ref)}) for a ${long ? 'long' : 'short'}`;
+  }
+
   async function submit(e) {
     e.preventDefault();
     const c = target(), type = $('#tr-type').value, btn = $('#tr-submit');
+    const bad = levelError(c);
+    if (bad) return toast(bad);
     const sent = pendingId ||= newId(); // kept until the server answers, so a retry after a network error can't trade twice
     btn.disabled = true;
     const ok = await act(`/accounts/${st.account.id}/orders`, 'POST', {
@@ -309,9 +334,23 @@ const Trading = (() => {
       pendingId = null;
       const rejected = st.history.find(o => o.client_order_id === sent && o.status === 'rejected');
       if (rejected) toast(`Order rejected: ${rejected.reason}`);
-      else tab = st.orders.some(o => o.client_order_id === sent) ? 'orders' : 'positions';
-      renderTable();
+      else {
+        tab = st.orders.some(o => o.client_order_id === sent) ? 'orders' : 'positions';
+        const { sl, tp } = legs(c), key = `${c.source}:${c.symbol}`;
+        if (sl != null || tp != null) {
+          if (st.positions.some(p => p.symbol === key)) await exits(key, sl, tp);
+          else toast('SL / TP are set once the order fills: add them in the Positions tab.'); // limit orders and replay fills come later
+        }
+      }
+      forceRender = true; renderTable(); forceRender = false;
     }
+  }
+
+  async function exits(symbol, sl, tp) {
+    forceRender = true; // a rejected level keeps what was typed; an accepted one redraws the row
+    const ok = await act(`/accounts/${st.account.id}/exits`, 'PUT', { symbol, sl, tp });
+    forceRender = false;
+    return ok;
   }
 
   async function onTableClick(e) {
@@ -321,7 +360,7 @@ const Trading = (() => {
     if (b.dataset.a === 'close') return act(`/accounts/${id}/close`, 'POST', { client_order_id: newId(), symbol: row.dataset.k });
     if (b.dataset.a === 'exits') {
       const v = f => { const x = row.querySelector(`[data-f=${f}]`).value; return x === '' ? null : +x; };
-      return act(`/accounts/${id}/exits`, 'PUT', { symbol: row.dataset.k, sl: v('sl'), tp: v('tp') });
+      return exits(row.dataset.k, v('sl'), v('tp'));
     }
   }
 

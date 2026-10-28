@@ -64,6 +64,9 @@
         <label class="field"><span>Type</span><select id="tr-type"><option value="market">Market</option><option value="limit">Limit</option></select></label>
         <label class="field"><span>Amount</span><span class="qty"><input id="tr-qty" type="number" step="any" min="0" value="1" required><select id="tr-unit" title="Quantity of the instrument, or an amount in the account currency"></select></span></label>
         <label class="field" id="tr-price-f"><span>Limit price</span><input id="tr-price" type="number" step="any" min="0"></label>
+        <label class="field"><span>Stop loss</span><input id="tr-sl" type="number" step="any" min="0" placeholder="optional"></label>
+        <label class="field"><span>Take profit</span><input id="tr-tp" type="number" step="any" min="0" placeholder="optional"></label>
+        <div id="tr-est" class="tr-note"></div>
         <button id="tr-submit" class="btn primary"></button>
         <div id="tr-note" class="tr-note"></div>
       </form>

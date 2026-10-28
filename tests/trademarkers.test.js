@@ -18,6 +18,7 @@ assert.deepStrictEqual(markers.map(m => [m.time - T, m.price, m.shape, m.positio
   [900, 100, 'arrowUp', 'atPriceBottom', 'Buy 0.3'],
   [1800, 95, 'arrowDown', 'atPriceTop', 'SL 0.3 −1.50'],
 ], 'filled orders of this symbol only, at their fill price, oldest first');
-assert.deepStrictEqual(lines.map(l => [l.price, l.title]), [[101, 'Short 2 +4.25'], [110, 'SL'], [90, 'Buy limit 1']]);
+assert.deepStrictEqual(lines.map(l => [l.price, l.title]), [[101, 'Short 2 +4.25 (+2.10%)'], [110, 'SL'], [90, 'Buy limit 1']]);
+assert.strictEqual(TM.build({ ...st, positions: [{ symbol: 'crypto:BTC', qty: 0.0001, avg_price: 81000, unrealized: 0.0123, sl: null, tp: null }] }, bars, 'crypto:BTC').lines[0].title, 'Long 0.0001 +0.0123 (+0.152%)', 'cents are not rounded away on small positions');
 assert.deepStrictEqual(TM.build(st, [], 'crypto:BTC').markers, [], 'no bars loaded: no markers');
 console.log('trademarkers ok');
