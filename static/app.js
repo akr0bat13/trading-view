@@ -29,10 +29,11 @@ const panes = [];
 // trades of the paper bot; the server proxies them from analytics-api and answers 503 when that is not configured
 const BOT = {
   trades: [],
+  source: 'live', // 'replay': the saved replay on past data, shown from the Bot panel
   async refresh() {
     try {
-      const r = await fetch('/api/bot/trades?limit=200');
-      if (r.ok) { this.trades = await r.json(); panes.forEach(p => p.applyBotMarkers()); }
+      const r = await fetch('/api/bot/trades?limit=200' + (this.source === 'replay' ? '&source=replay' : ''));
+      if (r.ok) { this.trades = (await r.json()).map(t => this.source === 'replay' ? { ...t, replay: true } : t); panes.forEach(p => p.applyBotMarkers()); }
     } catch { }
   },
 };

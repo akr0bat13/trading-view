@@ -83,10 +83,22 @@ def fetch_bot_trades(limit):
         return None, (jsonify(error=str(e)), 502)
 
 
+REPLAY = Path(__file__).with_name("data") / "bot_replay.json"
+
+
+def bot_trades_of(limit):
+    """(trades, error response, meta): the live bot's, or with ?source=replay the saved replay on past data (data/bot_replay.json)."""
+    if request.args.get("source") == "replay":
+        j = json.loads(REPLAY.read_text())
+        return j["trades"], None, j["meta"]
+    trades, err = fetch_bot_trades(limit)
+    return trades, err, None
+
+
 @app.get("/api/bot/trades")
 def bot_trades():
     """Trades of the paper bot from analytics-api, for the entry/exit arrows. The service token stays on the server."""
-    trades, err = fetch_bot_trades(request.args.get("limit", 200, type=int))
+    trades, err, _ = bot_trades_of(request.args.get("limit", 200, type=int))
     return err or jsonify(trades)
 
 
@@ -115,8 +127,8 @@ def bot_summary(trades):
 @app.get("/api/bot/report")
 def bot_report():
     """The bot's own account: totals, equity curve, open position and entered trades, computed from the same ledger."""
-    trades, err = fetch_bot_trades(500)
-    return err or jsonify(summary=bot_summary(trades), trades=[t for t in trades if t.get("opened_at")])
+    trades, err, meta = bot_trades_of(500)
+    return err or jsonify(summary=bot_summary(trades), trades=[t for t in trades if t.get("opened_at")], meta=meta)
 
 
 # UI state (settings, drawings, layouts, ...) lives in local JSON files under state/,

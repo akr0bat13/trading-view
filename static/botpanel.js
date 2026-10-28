@@ -6,7 +6,7 @@ const BotPanel = (() => {
   const cls = v => v > 0 ? 'up' : v < 0 ? 'down' : '';
   const r = v => v == null ? '—' : `${v < 0 ? '−' : '+'}${Math.abs(v).toFixed(2)}R`;
   const secs = iso => Date.parse(iso) / 1000, when = iso => iso ? new Date(iso).toLocaleString() : '';
-  let trades = [];
+  let trades = [], source = 'live';
 
   function curve(pts) {
     if (pts.length < 2) return '<div class="tr-empty">Not enough closed trades for a curve yet</div>';
@@ -19,17 +19,19 @@ const BotPanel = (() => {
 
   async function open() {
     const dlg = $('#bot-dlg'), body = $('#bot-body');
-    body.innerHTML = '<div class="tr-empty">Loading…</div>';
-    dlg.showModal();
+    const tab = (v, label) => `<button class="btn${source === v ? ' primary' : ''}" data-src="${v}">${label}</button>`, tabs = `<div class="rep-tabs">${tab('live', 'Live')} ${tab('replay', 'Replay')}</div>`;
+    body.innerHTML = tabs + '<div class="tr-empty">Loading…</div>';
+    if (!dlg.open) dlg.showModal();
     let j;
     try {
-      const resp = await fetch('/api/bot/report');
+      const resp = await fetch('/api/bot/report' + (source === 'replay' ? '?source=replay' : ''));
       j = await resp.json();
       if (!resp.ok) throw new Error(j.error || resp.statusText);
-    } catch (e) { body.innerHTML = `<div class="err">${esc(e.message)}</div>`; return; }
+    } catch (e) { body.innerHTML = tabs + `<div class="err">${esc(e.message)}</div>`; return; }
     const k = j.summary, cell = (a, v, c = '', sub = '') => `<span><i>${a}</i><b class="${c}">${v}</b>${sub ? `<small>${sub}</small>` : ''}</span>`;
     trades = j.trades;
-    body.innerHTML = `<div class="rep-warn">Virtual money on a Binance testnet. PnL is net of fees; R is PnL divided by the risk at entry. A few trades say nothing about the strategy: judge after 30–50.</div>
+    body.innerHTML = `${tabs}
+      <div class="rep-warn">${j.meta ? `Replay on past data, not live trading: ${esc(j.meta.strategy)}, ${esc(j.meta.window)}. ${esc(j.meta.costs)}.` : 'Virtual money on a Binance testnet. PnL is net of fees; R is PnL divided by the risk at entry. A few trades say nothing about the strategy: judge after 30–50.'}</div>
       <div class="rep-grid">${[
         cell('Closed trades', k.closed, '', k.open.length ? `+ ${k.open.length} open` : ''),
         cell('Win rate', k.win_rate == null ? '—' : (k.win_rate * 100).toFixed(0) + '%', '', `${k.wins} wins`),
@@ -63,7 +65,11 @@ const BotPanel = (() => {
   function init() {
     $('#bot-btn').innerHTML = `${UI.ICON.long}<span>Bot</span>`;
     $('#bot-btn').onclick = open;
-    $('#bot-body').onclick = e => { const tr = e.target.closest('tr[data-i]'); if (tr) show(trades[tr.dataset.i]); };
+    $('#bot-body').onclick = async e => {
+      const b = e.target.closest('[data-src]');
+      if (b) { source = b.dataset.src; BOT.source = source; await open(); BOT.refresh(); return; }
+      const tr = e.target.closest('tr[data-i]'); if (tr) show(trades[tr.dataset.i]);
+    };
   }
   return { init };
 })();

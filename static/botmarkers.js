@@ -23,7 +23,7 @@ const BotMarkers = (() => {
       const short = t.side === 'short'; // a short enters with a down arrow above the bar and leaves with an up arrow below it
       if (open != null) out.push({
         time: open, position: short ? 'aboveBar' : 'belowBar', shape: short ? 'arrowDown' : 'arrowUp', color: BLUE,
-        text: `Bot ${short ? 'SHORT' : 'BUY'} ${Number(t.qty)}`,
+        text: `${t.replay ? 'Replay' : 'Bot'} ${short ? 'SHORT' : 'BUY'} ${Number(t.qty)}`,
       });
       if (t.closed_at) {
         const close = snap(bars, secs(t.closed_at)), pnl = Number(t.pnl);
