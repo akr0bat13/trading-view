@@ -85,7 +85,7 @@ class StorageTest(unittest.TestCase):
         self.assertIsNone(sim.fill(self.db, first["id"], 100, 0))  # filling a filled order is a no-op
 
     def test_insufficient_funds_and_missing_price_are_rejected_without_touching_cash(self):
-        self.assertEqual(self.order("big", "buy", 101, 100)["reason"], "insufficient funds")
+        self.assertEqual(self.order("big", "buy", 101, 100)["reason"], "insufficient funds: needs 10,110.10, free 10,000.00 USD")
         o = sim.place_order(self.db, "me", self.aid, "nop", "BTC", "buy", "market", 1, mark=None)
         self.assertEqual((o["status"], o["reason"]), ("rejected", "no market price"))
         self.assertEqual(self.summary()["balance"], 10_000)
@@ -95,7 +95,7 @@ class StorageTest(unittest.TestCase):
     def test_open_limits_reserve_funds_and_can_be_cancelled(self):
         o = sim.place_order(self.db, "me", self.aid, "l1", "BTC", "buy", "limit", 50, price=100)
         self.assertEqual(o["status"], "open")
-        self.assertEqual(sim.place_order(self.db, "me", self.aid, "l2", "BTC", "buy", "limit", 50, price=100)["reason"], "insufficient funds")
+        self.assertEqual(sim.place_order(self.db, "me", self.aid, "l2", "BTC", "buy", "limit", 50, price=100)["reason"].split(":")[0], "insufficient funds")
         self.assertTrue(sim.cancel_order(self.db, "me", self.aid, o["id"]))
         self.assertFalse(sim.cancel_order(self.db, "me", self.aid, o["id"]))
         self.assertIsNone(sim.fill(self.db, o["id"], 100, 0))  # a cancelled order can't fill

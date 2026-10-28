@@ -207,8 +207,9 @@ def place_order(db, owner, account_id, client_order_id, symbol, side, type_, qty
             pos = position(db, a["id"], symbol)
             q = pos["qty"] if pos else 0.0
             added = max(0.0, abs(q + (qty if side == "buy" else -qty)) - abs(q)) * ref  # reducing a position needs no margin
-            if added + abs(qty) * ref * a["fee_bps"] / 1e4 > summary(db, a, {symbol: mark} if mark else {})["free"] + 1e-9:
-                reason = "insufficient funds"
+            need, free = added + abs(qty) * ref * a["fee_bps"] / 1e4, summary(db, a, {symbol: mark} if mark else {})["free"]
+            if need > free + 1e-9:
+                reason = f"insufficient funds: needs {need:,.2f}, free {free:,.2f} {a['currency']}"
         oid = db.execute("INSERT INTO orders (account_id, client_order_id, symbol, side, type, qty, price, status, reason, created_at)"
                          " VALUES (?,?,?,?,?,?,?,?,?,?)", (a["id"], client_order_id, symbol, side, type_, qty, price if type_ == "limit" else None,
                                                            "rejected" if reason else "open", reason, now)).lastrowid
