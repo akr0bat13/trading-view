@@ -201,6 +201,8 @@ select.tb.sel option { background: var(--panel); }
 .tr-body { flex: 1; min-height: 0; display: flex; }
 #tr-form { width: 240px; flex: none; display: flex; flex-direction: column; gap: 7px; padding: 8px 10px; border-right: 1px solid var(--line); overflow-y: auto; }
 #tr-form .field input, #tr-form .field select { width: 120px; }
+#tr-form .qty { display: flex; gap: 4px; width: 150px; }
+#tr-form .qty input { width: 0; flex: 1; } #tr-form .qty select { width: 58px; padding: 5px 2px; }
 #tr-form select { background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 5px 6px; }
 #tr-form [hidden] { display: none; }
 .tr-sym b { font-size: 15px; } .tr-sym span { color: var(--muted); margin-left: 6px; font-size: 12px; }

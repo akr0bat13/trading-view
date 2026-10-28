@@ -61,7 +61,7 @@
         <div class="tr-sym"><b id="tr-sym"></b><span id="tr-src"></span></div>
         <div id="tr-side" class="seg"><button type="button" class="tb" data-s="buy">Buy / Long</button><button type="button" class="tb" data-s="sell">Sell / Short</button></div>
         <label class="field"><span>Type</span><select id="tr-type"><option value="market">Market</option><option value="limit">Limit</option></select></label>
-        <label class="field"><span>Quantity</span><input id="tr-qty" type="number" step="any" min="0" value="1" required></label>
+        <label class="field"><span>Amount</span><span class="qty"><input id="tr-qty" type="number" step="any" min="0" value="1" required><select id="tr-unit" title="Quantity of the instrument, or an amount in the account currency"></select></span></label>
         <label class="field" id="tr-price-f"><span>Limit price</span><input id="tr-price" type="number" step="any" min="0"></label>
         <button id="tr-submit" class="btn primary"></button>
         <div id="tr-note" class="tr-note"></div>

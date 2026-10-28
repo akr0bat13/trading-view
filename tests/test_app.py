@@ -94,6 +94,18 @@ class TradingApiTest(unittest.TestCase):
         self.assertEqual(s["positions"][0]["qty"], 1)
         self.assertAlmostEqual(s["summary"]["balance"], 10000 - 0.1)
 
+    def test_amount_in_account_currency_becomes_a_quantity_at_the_server_price(self):
+        self.bars["crypto:BTC"] = [self.bar(self.t - 60, 80000, 80000, 80000, 80000)]
+        s = self.order("cash-0001", side="buy", type="market", notional=1000, price=1).get_json()  # the client's price is ignored
+        self.assertEqual(s["positions"][0]["qty"], 0.0125)
+        s = self.order("cash-0002", side="buy", type="limit", notional=1000, price=50000).get_json()
+        self.assertEqual(s["orders"][0]["qty"], 0.02)
+        self.bars["us:AAPL"] = [self.bar(self.t - 60, 150, 150, 150, 150)]
+        s = self.order("cash-0003", side="buy", type="market", notional=1000, source="us", symbol="AAPL").get_json()
+        self.assertEqual(s["positions"][-1]["qty"], 6)  # whole shares, rounded down
+        self.assertEqual(self.order("cash-0004", side="buy", type="market", notional=100, source="us", symbol="AAPL").status_code, 400)
+        self.assertEqual(self.order("cash-0005", side="buy", type="market", notional=-5).status_code, 400)
+
     def test_no_recent_price_rejects_instead_of_filling(self):
         self.bars["crypto:BTC"] = [self.bar(self.t - 3600, 100, 100, 100, 100)]
         h = self.order("order-0002", side="buy", type="market", qty=1).get_json()["history"][0]
