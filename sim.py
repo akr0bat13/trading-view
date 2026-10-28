@@ -55,7 +55,21 @@ def connect(path):
     db.execute("PRAGMA foreign_keys = ON")
     db.execute("PRAGMA journal_mode = WAL")
     db.executescript(SCHEMA)
+    migrate(db)
     return db
+
+
+# Columns added after the first release. CREATE TABLE IF NOT EXISTS leaves an older database as it was, so add them here.
+COLUMNS = [("accounts", "checked_at", "INTEGER NOT NULL DEFAULT 0"), ("orders", "closed_at", "INTEGER"),
+           ("positions", "since", "INTEGER NOT NULL DEFAULT 0")]
+
+
+def migrate(db):
+    for table, col, ddl in COLUMNS:
+        if col not in [r["name"] for r in db.execute(f"PRAGMA table_info({table})")]:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
+            if col == "checked_at":  # old accounts have no unprocessed bars: don't replay history through on_bar
+                db.execute("UPDATE accounts SET checked_at = CAST(strftime('%s', 'now') AS INTEGER)")
 
 
 @contextmanager

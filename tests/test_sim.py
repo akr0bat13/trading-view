@@ -134,6 +134,23 @@ class StorageTest(unittest.TestCase):
                 sim.create_account(self.db, "me", args["name"], "paper", "USD", args["initial"], fee_bps=kw.get("fee_bps", 5))
 
 
+class MigrationTest(unittest.TestCase):
+    def test_database_from_before_the_added_columns_still_trades(self):
+        import re, sqlite3, tempfile
+        path = os.path.join(tempfile.mkdtemp(), "old.db")
+        old = re.sub(r",\s*checked_at INTEGER NOT NULL DEFAULT 0", "", sim.SCHEMA)
+        old = old.replace(", closed_at INTEGER", "").replace("since INTEGER NOT NULL DEFAULT 0,", "")
+        raw = sqlite3.connect(path)
+        raw.executescript(old)
+        raw.close()
+        db = sim.connect(path)
+        aid = sim.create_account(db, "me", "Demo", "paper", "USD", 10_000, slippage_bps=0)
+        o = sim.place_order(db, "me", aid, "old-db-1", "BTC", "sell", "market", 0.1, mark=100, fill_at=100)
+        self.assertEqual(o["status"], "filled")
+        self.assertEqual(sim.position(db, aid, "BTC")["qty"], -0.1)
+        sim.connect(path)  # a second start finds the columns and changes nothing
+
+
 class ReplayTest(unittest.TestCase):
     """15m session starting at bar 10 of 40; prices rise 1 per bar from 100."""
 
