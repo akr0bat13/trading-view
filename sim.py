@@ -280,9 +280,9 @@ def set_exits(db, owner, account_id, symbol, mark, sl=None, tp=None, now=0):
         if not _num(mark):
             raise ValueError("no market price")
         if sl is not None and not (_num(sl) and (sl < mark if long else sl > mark)):
-            raise ValueError("stop loss must be " + ("below" if long else "above") + " the current price")
+            raise ValueError(f"stop loss must be {'below' if long else 'above'} the current price ({mark:g}) for a {'long' if long else 'short'}")
         if tp is not None and not (_num(tp) and (tp > mark if long else tp < mark)):
-            raise ValueError("take profit must be " + ("above" if long else "below") + " the current price")
+            raise ValueError(f"take profit must be {'above' if long else 'below'} the current price ({mark:g}) for a {'long' if long else 'short'}")
         db.execute("UPDATE positions SET sl = ?, tp = ?, since = ? WHERE account_id = ? AND symbol = ?", (sl, tp, now, account_id, symbol))
 
 
