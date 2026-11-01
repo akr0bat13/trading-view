@@ -83,13 +83,16 @@ def fetch_bot_trades(limit):
         return None, (jsonify(error=str(e)), 502)
 
 
-REPLAY = Path(__file__).with_name("data") / "bot_replay.json"
+REPLAYS = {"wave": "bot_replay.json", "ema": "bot_replay_ema.json"}  # ?source=replay&set=wave|ema, files in data/
 
 
 def bot_trades_of(limit):
     """(trades, error response, meta): the live bot's, or with ?source=replay the saved replay on past data (data/bot_replay.json)."""
     if request.args.get("source") == "replay":
-        j = json.loads(REPLAY.read_text())
+        name = REPLAYS.get(request.args.get("set", "wave"))
+        if not name:
+            return None, (jsonify(error="unknown replay set"), 400), None
+        j = json.loads((Path(__file__).with_name("data") / name).read_text())
         return j["trades"], None, j["meta"]
     trades, err = fetch_bot_trades(limit)
     return trades, err, None

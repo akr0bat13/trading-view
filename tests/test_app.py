@@ -54,6 +54,9 @@ class AppTest(unittest.TestCase):
         self.assertIn("replay", j["meta"]["source"])
         self.assertEqual(len(c.get("/api/bot/trades?source=replay").get_json()), 60)
         self.assertEqual(c.get("/api/bot/report").status_code, 503)
+        ema = c.get("/api/bot/report?source=replay&set=ema").get_json()
+        self.assertEqual((ema["summary"]["closed"], {t["symbol"] for t in ema["trades"]}), (60, {"BTCUSDT", "ETHUSDT", "SOLUSDT"}))
+        self.assertEqual(c.get("/api/bot/report?source=replay&set=nope").status_code, 400)
 
     def test_bot_summary(self):
         m = load()
