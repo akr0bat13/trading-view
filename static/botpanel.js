@@ -19,12 +19,12 @@ const BotPanel = (() => {
 
   async function open() {
     const dlg = $('#bot-dlg'), body = $('#bot-body');
-    const tab = (v, label) => `<button class="btn${source === v ? ' primary' : ''}" data-src="${v}">${label}</button>`, tabs = `<div class="rep-tabs">${tab('live', 'Live')} ${tab('replay', 'Replay')}</div>`;
+    const tab = (v, label) => `<button class="btn${source === v ? ' primary' : ''}" data-src="${v}">${label}</button>`, tabs = `<div class="rep-tabs">${tab('live', 'Live')} ${tab('replay:wave', 'Replay waves')} ${tab('replay:ema', 'Replay EMA 1h')}</div>`;
     body.innerHTML = tabs + '<div class="tr-empty">Loading…</div>';
     if (!dlg.open) dlg.showModal();
     let j;
     try {
-      const resp = await fetch('/api/bot/report' + (source === 'replay' ? '?source=replay' : ''));
+      const resp = await fetch('/api/bot/report' + (source.startsWith('replay') ? '?source=replay&set=' + source.slice(7) : ''));
       j = await resp.json();
       if (!resp.ok) throw new Error(j.error || resp.statusText);
     } catch (e) { body.innerHTML = tabs + `<div class="err">${esc(e.message)}</div>`; return; }
